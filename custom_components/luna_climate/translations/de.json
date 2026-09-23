@@ -1,0 +1,197 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Luna Climate",
+        "description": "Richtet die Luna-Climate-Steuerung ein. Zonen werden anschließend unter „Konfigurieren“ angelegt."
+      }
+    },
+    "abort": {
+      "already_configured": "Luna Climate ist bereits eingerichtet."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Luna Climate",
+        "menu_options": {
+          "add_zone": "Zone hinzufügen",
+          "edit_zone": "Zone bearbeiten",
+          "remove_zone": "Zone entfernen"
+        }
+      },
+      "add_zone": {
+        "title": "Zone hinzufügen",
+        "data": {
+          "name": "Name der Zone",
+          "thermostats": "Thermostate",
+          "temp_sensors": "Temperatursensoren",
+          "linked_devices": "Verknüpfte Geräte",
+          "presence_entities": "Anwesenheitsmelder",
+          "humidity_sensors": "Feuchtigkeitssensoren"
+        },
+        "data_description": {
+          "thermostats": "Climate-Entitäten, die selbst regeln. Sie erhalten die Zieltemperatur der Zone.",
+          "temp_sensors": "Womit die Zone gemessen wird. Leer lassen, um auf die Messwerte der Thermostate zurückzufallen. Pflicht, sobald die Zone verknüpfte Geräte enthält.",
+          "linked_devices": "Schalter ohne eigene Regelung, etwa ein Handtuchwärmer. Luna schaltet sie anhand der gemessenen Temperatur.",
+          "presence_entities": "Sind alle aus, fällt die Zone auf ihre Abwesenheitstemperatur zurück. Leer lassen, um die Abwesenheitslogik für diese Zone zu deaktivieren.",
+          "humidity_sensors": "Optional. Leer lassen, um die Feuchtigkeitssensoren der Geräte zu verwenden, die bereits als Temperatursensor oder Thermostat in der Zone sind."
+        }
+      },
+      "edit_zone": {
+        "title": "Zone bearbeiten",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "edit_zone_details": {
+        "title": "{zone} bearbeiten",
+        "data": {
+          "name": "Name der Zone",
+          "thermostats": "Thermostate",
+          "temp_sensors": "Temperatursensoren",
+          "linked_devices": "Verknüpfte Geräte",
+          "presence_entities": "Anwesenheitsmelder",
+          "humidity_sensors": "Feuchtigkeitssensoren"
+        }
+      },
+      "remove_zone": {
+        "title": "Zone entfernen",
+        "data": {
+          "zone_id": "Zone"
+        }
+      }
+    },
+    "error": {
+      "no_devices": "Eine Zone braucht mindestens ein Thermostat oder ein verknüpftes Gerät.",
+      "sensor_required": "Eine Zone mit verknüpften Geräten braucht einen Temperatursensor als Regelgröße."
+    },
+    "abort": {
+      "unknown_zone": "Diese Zone existiert nicht mehr."
+    }
+  },
+  "entity": {
+    "select": {
+      "zone_mode": {
+        "name": "Modus",
+        "state": {
+          "auto": "Zeitplan",
+          "manual": "Manuell"
+        }
+      }
+    },
+    "switch": {
+      "night_mode": {
+        "name": "Nachtmodus"
+      }
+    },
+    "number": {
+      "away_temp": {
+        "name": "Abwesenheitstemperatur"
+      },
+      "night_temp": {
+        "name": "Nachttemperatur"
+      },
+      "boost_offset": {
+        "name": "Boost-Aufschlag"
+      },
+      "hysteresis": {
+        "name": "Hysterese"
+      },
+      "min_cycle": {
+        "name": "Mindestschaltdauer"
+      },
+      "precomfort_timeout": {
+        "name": "Precomfort-Zeitlimit"
+      }
+    },
+    "time": {
+      "night_start": {
+        "name": "Nachtbeginn"
+      },
+      "night_end": {
+        "name": "Nachtende"
+      }
+    },
+    "sensor": {
+      "scheduled_temp": {
+        "name": "Geplante Temperatur"
+      },
+      "boost_ends_at": {
+        "name": "Boost endet um"
+      },
+      "battery_min": {
+        "name": "Niedrigster Batteriestand"
+      },
+      "night_avg_temp": {
+        "name": "Durchschnittliche Nachttemperatur"
+      }
+    }
+  },
+  "services": {
+    "boost": {
+      "name": "Boost",
+      "description": "Hebt das Ziel einer Zone für eine begrenzte Zeit an. Danach kehrt die Zone zu dem zurück, was in diesem Moment gilt – nicht zum Block, der beim Start des Boosts lief.",
+      "fields": {
+        "duration": {
+          "name": "Dauer",
+          "description": "Dauer des Boosts in Minuten."
+        },
+        "temperature": {
+          "name": "Temperatur",
+          "description": "Absolutes Ziel während des Boosts. Leer lassen, um den Boost-Aufschlag der Zone auf das aktuelle Ziel zu addieren."
+        }
+      }
+    },
+    "cancel_boost": {
+      "name": "Boost abbrechen",
+      "description": "Beendet einen laufenden Boost vorzeitig."
+    },
+    "cool_for": {
+      "name": "Kühlen für",
+      "description": "Für den Klimaanlagen-Teil reserviert. Noch nicht implementiert.",
+      "fields": {
+        "duration": {
+          "name": "Dauer",
+          "description": "Kühldauer in Minuten."
+        }
+      }
+    },
+    "start_precomfort": {
+      "name": "Precomfort starten",
+      "description": "Unterdrückt den Abwesenheitsmodus, sodass jede Zone ihren aktuellen Zeitplanblock aufnimmt. Wird beendet, sobald jemand ankommt, oder nach dem Precomfort-Zeitlimit."
+    },
+    "clear_precomfort": {
+      "name": "Precomfort beenden",
+      "description": "Beendet die Precomfort-Phase sofort."
+    },
+    "set_schedule": {
+      "name": "Zeitplan setzen",
+      "description": "Ersetzt den Wochenzeitplan einer Zone.",
+      "fields": {
+        "schedule": {
+          "name": "Zeitplan",
+          "description": "Liste von Blöcken: weekdays (0 = Montag), start (HH:MM) und value (off, max oder 18–25)."
+        }
+      }
+    },
+    "get_schedule": {
+      "name": "Zeitplan abrufen",
+      "description": "Gibt den Wochenzeitplan einer Zone zurück."
+    },
+    "set_target": {
+      "name": "Ziel setzen",
+      "description": "Hält eine Zone auf einem festen Wert und pausiert ihren Zeitplan. Beendet einen laufenden Boost.",
+      "fields": {
+        "value": {
+          "name": "Wert",
+          "description": "off, max oder eine Temperatur. Ab 27 gilt als max."
+        }
+      }
+    },
+    "resume_schedule": {
+      "name": "Zeitplan fortsetzen",
+      "description": "Übergibt eine Zone wieder an ihren Zeitplan."
+    }
+  }
+}

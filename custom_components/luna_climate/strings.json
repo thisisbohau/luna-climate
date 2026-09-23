@@ -1,0 +1,197 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Luna Climate",
+        "description": "Sets up the Luna Climate controller. Zones are added afterwards under Configure."
+      }
+    },
+    "abort": {
+      "already_configured": "Luna Climate is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Luna Climate",
+        "menu_options": {
+          "add_zone": "Add a zone",
+          "edit_zone": "Edit a zone",
+          "remove_zone": "Remove a zone"
+        }
+      },
+      "add_zone": {
+        "title": "Add a zone",
+        "data": {
+          "name": "Zone name",
+          "thermostats": "Thermostats",
+          "temp_sensors": "Temperature sensors",
+          "linked_devices": "Linked devices",
+          "presence_entities": "Presence trackers",
+          "humidity_sensors": "Humidity sensors"
+        },
+        "data_description": {
+          "thermostats": "Climate entities that regulate themselves. They receive the zone's target temperature.",
+          "temp_sensors": "What measures the zone. Leave empty to fall back to the thermostats' own readings. Required when the zone has linked devices.",
+          "linked_devices": "Switches with no control loop of their own, such as a towel warmer. Luna switches them against the measured temperature.",
+          "presence_entities": "When all of these are off, the zone falls back to its away temperature. Leave empty to disable away handling for this zone.",
+          "humidity_sensors": "Optional. Leave empty to use the humidity sensors on the same devices as the zone's temperature sensors and thermostats."
+        }
+      },
+      "edit_zone": {
+        "title": "Edit a zone",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "edit_zone_details": {
+        "title": "Edit {zone}",
+        "data": {
+          "name": "Zone name",
+          "thermostats": "Thermostats",
+          "temp_sensors": "Temperature sensors",
+          "linked_devices": "Linked devices",
+          "presence_entities": "Presence trackers",
+          "humidity_sensors": "Humidity sensors"
+        }
+      },
+      "remove_zone": {
+        "title": "Remove a zone",
+        "data": {
+          "zone_id": "Zone"
+        }
+      }
+    },
+    "error": {
+      "no_devices": "A zone needs at least one thermostat or one linked device.",
+      "sensor_required": "A zone with linked devices needs a temperature sensor to regulate against."
+    },
+    "abort": {
+      "unknown_zone": "That zone no longer exists."
+    }
+  },
+  "entity": {
+    "select": {
+      "zone_mode": {
+        "name": "Mode",
+        "state": {
+          "auto": "Schedule",
+          "manual": "Manual"
+        }
+      }
+    },
+    "switch": {
+      "night_mode": {
+        "name": "Night mode"
+      }
+    },
+    "number": {
+      "away_temp": {
+        "name": "Away temperature"
+      },
+      "night_temp": {
+        "name": "Night temperature"
+      },
+      "boost_offset": {
+        "name": "Boost offset"
+      },
+      "hysteresis": {
+        "name": "Hysteresis"
+      },
+      "min_cycle": {
+        "name": "Minimum cycle time"
+      },
+      "precomfort_timeout": {
+        "name": "Precomfort timeout"
+      }
+    },
+    "time": {
+      "night_start": {
+        "name": "Night start"
+      },
+      "night_end": {
+        "name": "Night end"
+      }
+    },
+    "sensor": {
+      "scheduled_temp": {
+        "name": "Scheduled temperature"
+      },
+      "boost_ends_at": {
+        "name": "Boost ends at"
+      },
+      "battery_min": {
+        "name": "Lowest battery"
+      },
+      "night_avg_temp": {
+        "name": "Night average temperature"
+      }
+    }
+  },
+  "services": {
+    "boost": {
+      "name": "Boost",
+      "description": "Raises a zone's target for a set time. When it expires the zone returns to whatever applies at that moment, not to the block that was running when the boost started.",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "How long the boost lasts, in minutes."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "Absolute target during the boost. Leave empty to add the zone's boost offset to the current target."
+        }
+      }
+    },
+    "cancel_boost": {
+      "name": "Cancel boost",
+      "description": "Ends a running boost early."
+    },
+    "cool_for": {
+      "name": "Cool for",
+      "description": "Reserved for the air conditioning half. Not implemented yet.",
+      "fields": {
+        "duration": {
+          "name": "Duration",
+          "description": "How long to cool, in minutes."
+        }
+      }
+    },
+    "start_precomfort": {
+      "name": "Start precomfort",
+      "description": "Suppresses away mode so every zone resumes its current schedule block. Cleared when somebody arrives, or after the precomfort timeout."
+    },
+    "clear_precomfort": {
+      "name": "Clear precomfort",
+      "description": "Ends the precomfort grace period immediately."
+    },
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Replaces a zone's weekly schedule.",
+      "fields": {
+        "schedule": {
+          "name": "Schedule",
+          "description": "List of blocks: weekdays (0 = Monday), start (HH:MM) and value (off, max, or 18-25)."
+        }
+      }
+    },
+    "get_schedule": {
+      "name": "Get schedule",
+      "description": "Returns a zone's weekly schedule."
+    },
+    "set_target": {
+      "name": "Set target",
+      "description": "Holds a zone at a fixed value and pauses its schedule. Ends any running boost.",
+      "fields": {
+        "value": {
+          "name": "Value",
+          "description": "off, max, or a temperature. 27 or above counts as max."
+        }
+      }
+    },
+    "resume_schedule": {
+      "name": "Resume schedule",
+      "description": "Hands a zone back to its schedule."
+    }
+  }
+}

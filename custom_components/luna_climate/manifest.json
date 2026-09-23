@@ -1,0 +1,20 @@
+{
+  "domain": "luna_climate",
+  "name": "Luna Climate",
+  "codeowners": [
+    "@davidbohaumilitzky"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/davidbohaumilitzky/luna-climate",
+  "integration_type": "hub",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/davidbohaumilitzky/luna-climate/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.3.0"
+}
