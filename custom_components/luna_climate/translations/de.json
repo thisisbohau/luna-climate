@@ -17,7 +17,8 @@
         "menu_options": {
           "add_zone": "Zone hinzufügen",
           "edit_zone": "Zone bearbeiten",
-          "remove_zone": "Zone entfernen"
+          "remove_zone": "Zone entfernen",
+          "presence": "Zuhause & abwesend"
         }
       },
       "add_zone": {
@@ -27,15 +28,15 @@
           "thermostats": "Thermostate",
           "temp_sensors": "Temperatursensoren",
           "linked_devices": "Verknüpfte Geräte",
-          "presence_entities": "Anwesenheitsmelder",
-          "humidity_sensors": "Feuchtigkeitssensoren"
+          "humidity_sensors": "Feuchtigkeitssensoren",
+          "away_enabled": "Folgt Zuhause/Abwesend"
         },
         "data_description": {
           "thermostats": "Climate-Entitäten, die selbst regeln. Sie erhalten die Zieltemperatur der Zone.",
           "temp_sensors": "Womit die Zone gemessen wird. Leer lassen, um auf die Messwerte der Thermostate zurückzufallen. Pflicht, sobald die Zone verknüpfte Geräte enthält.",
           "linked_devices": "Schalter ohne eigene Regelung, etwa ein Handtuchwärmer. Luna schaltet sie anhand der gemessenen Temperatur.",
-          "presence_entities": "Sind alle aus, fällt die Zone auf ihre Abwesenheitstemperatur zurück. Leer lassen, um die Abwesenheitslogik für diese Zone zu deaktivieren.",
-          "humidity_sensors": "Optional. Leer lassen, um die Feuchtigkeitssensoren der Geräte zu verwenden, die bereits als Temperatursensor oder Thermostat in der Zone sind."
+          "humidity_sensors": "Optional. Leer lassen, um die Feuchtigkeitssensoren der Geräte zu verwenden, die bereits als Temperatursensor oder Thermostat in der Zone sind.",
+          "away_enabled": "Bei Abwesenheit auf die Abwesenheitstemperatur absenken. Ausschalten für Räume, die ihren Zeitplan immer behalten sollen."
         }
       },
       "edit_zone": {
@@ -51,14 +52,21 @@
           "thermostats": "Thermostate",
           "temp_sensors": "Temperatursensoren",
           "linked_devices": "Verknüpfte Geräte",
-          "presence_entities": "Anwesenheitsmelder",
-          "humidity_sensors": "Feuchtigkeitssensoren"
+          "humidity_sensors": "Feuchtigkeitssensoren",
+          "away_enabled": "Folgt Zuhause/Abwesend"
         }
       },
       "remove_zone": {
         "title": "Zone entfernen",
         "data": {
           "zone_id": "Zone"
+        }
+      },
+      "presence": {
+        "title": "Zuhause & abwesend",
+        "description": "Eine Liste für das ganze Haus. Sind alle Melder aus (oder not_home), fallen alle Zonen, die der Abwesenheit folgen, auf ihre Abwesenheitstemperatur.",
+        "data": {
+          "presence_entities": "Anwesenheitsmelder"
         }
       }
     },
@@ -125,6 +133,16 @@
       },
       "night_avg_temp": {
         "name": "Durchschnittliche Nachttemperatur"
+      }
+    },
+    "binary_sensor": {
+      "home": {
+        "name": "Zuhause"
+      }
+    },
+    "button": {
+      "details": {
+        "name": "Zeitplan & Details"
       }
     }
   },

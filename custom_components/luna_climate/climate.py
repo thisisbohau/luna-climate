@@ -118,6 +118,7 @@ class LunaZoneClimate(LunaZoneEntity, ClimateEntity):
             "luna_thermostats": self.zone.thermostats,
             "luna_temp_sensors": self.zone.temp_sensors,
             "luna_linked_devices": self.zone.linked_devices,
+            "luna_away_enabled": self.zone.away_enabled,
         }
         if resolved.block is not None:
             attrs["luna_block_start"] = resolved.block.start.isoformat()

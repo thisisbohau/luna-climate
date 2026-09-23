@@ -61,9 +61,11 @@ export interface StripOptions {
   schedule?: ScheduleBlock[];
   source: ZoneSource;
   onResume: () => void;
+  /** Tapping the strip opens the schedule editor. */
+  onOpen?: () => void;
 }
 
-export function renderScheduleStrip({ hass, schedule, source, onResume }: StripOptions) {
+export function renderScheduleStrip({ hass, schedule, source, onResume, onOpen }: StripOptions) {
   const L = (key: StringKey, vars?: Record<string, string | number>) => localize(hass, key, vars);
   const fmt = (v: TargetValue | undefined) => formatTemp(v, hass);
   const now = zonedNow(hass.config.time_zone);
@@ -100,7 +102,23 @@ export function renderScheduleStrip({ hass, schedule, source, onResume }: StripO
           ? html`<button type="button" class="link" @click=${onResume}>${L("resume")}</button>`
           : html`<span class="right">${right}</span>`}
       </div>
-      <div class="strip" aria-hidden="true">
+      <div
+        class="strip ${onOpen ? "open" : ""}"
+        role=${onOpen ? "button" : "presentation"}
+        tabindex=${onOpen ? "0" : "-1"}
+        aria-label=${onOpen ? L("schedule") : ""}
+        @click=${(ev: Event) => {
+          if (!onOpen) return;
+          ev.stopPropagation();
+          onOpen();
+        }}
+        @keydown=${(ev: KeyboardEvent) => {
+          if (onOpen && (ev.key === "Enter" || ev.key === " ")) {
+            ev.preventDefault();
+            onOpen();
+          }
+        }}
+      >
         ${view.segments.map((s) => {
           const bg =
             s.value === "off"
@@ -133,6 +151,14 @@ export function renderScheduleStrip({ hass, schedule, source, onResume }: StripO
 
 /** Styles for the strip. The host sets `--zone-color`. */
 export const scheduleStripStyles = css`
+  .strip.open {
+    cursor: pointer;
+  }
+  .strip.open:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 4px;
+    border-radius: 4px;
+  }
   .caption {
     display: flex;
     align-items: center;

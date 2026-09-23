@@ -555,3 +555,96 @@ async def test_unload(hass: HomeAssistant, house) -> None:
     assert hass.services.has_service(DOMAIN, "boost")
     with pytest.raises(ServiceValidationError):
         await call(hass, "boost", {"entity_id": WZ})
+
+
+async def test_old_per_zone_presence_is_migrated(hass: HomeAssistant, house) -> None:
+    """1.1 entries move presence to the household list without changing behaviour."""
+    assert house.minor_version == 2
+    assert house.options["presence_entities"] == [
+        "input_boolean.david_home",
+        "input_boolean.bettina_home",
+    ]
+    zones = {z["zone_id"]: z for z in house.options["zones"]}
+    assert "presence_entities" not in zones["wz"]
+    assert zones["wz"]["away_enabled"] is True  # had trackers
+    assert zones["bad"]["away_enabled"] is False  # had none
+    assert attr(hass, BAD, "luna_away_enabled") is False
+
+
+async def test_home_sensor_and_person_entities(hass: HomeAssistant, house, freezer) -> None:
+    """Person and device_tracker states count too: 'home' is home."""
+    home = "binary_sensor.luna_climate_home"
+    assert hass.states.get(home).state == "on"
+
+    hass.config_entries.async_update_entry(
+        house, options={**house.options, "presence_entities": ["person.david", "device_tracker.phone"]}
+    )
+    await hass.async_block_till_done()
+    hass.states.async_set("person.david", "home")
+    hass.states.async_set("device_tracker.phone", "not_home")
+    await goto(hass, freezer, "17:05")
+    assert hass.states.get(home).state == "on"
+    assert trv(hass) == ("heat", 21.5)
+
+    hass.states.async_set("person.david", "Work")  # a named zone is not home
+    await goto(hass, freezer, "17:06")
+    assert hass.states.get(home).state == "off"
+    assert trv(hass) == ("heat", 16.0)
+
+    # Precomfort lifts away for the zones but the sensor still says away.
+    await call(hass, "start_precomfort")
+    assert trv(hass) == ("heat", 21.5)
+    assert hass.states.get(home).state == "off"
+    assert hass.states.get(home).attributes["luna_precomfort_active"] is True
+
+    hass.states.async_set("person.david", "home")
+    await goto(hass, freezer, "17:07")
+    assert hass.states.get(home).state == "on"
+    assert hass.states.get(home).attributes["luna_precomfort_active"] is False
+
+
+async def test_away_can_be_turned_off_per_zone(hass: HomeAssistant, house, freezer) -> None:
+    """A zone that does not follow away keeps its schedule when everyone leaves."""
+    zones = [dict(z) for z in house.options["zones"]]
+    zones[0]["away_enabled"] = False
+    hass.config_entries.async_update_entry(house, options={**house.options, "zones": zones})
+    await hass.async_block_till_done()
+    await call(hass, "turn_off", {"entity_id": "input_boolean.david_home"}, domain="input_boolean")
+    await goto(hass, freezer, "17:06")
+    assert hass.states.get("binary_sensor.luna_climate_home").state == "off"
+    assert attr(hass, WZ, "luna_source") == "schedule"
+    assert trv(hass) == ("heat", 21.5)
+
+
+async def test_details_button_reaches_only_the_pressing_user(
+    hass: HomeAssistant, house, hass_ws_client, hass_admin_user
+) -> None:
+    """The device-page button opens the detail view in the presser's browser."""
+    from homeassistant.core import Context
+    from pytest_homeassistant_custom_component.common import MockUser
+
+    someone_else = MockUser(name="Bettina", is_owner=True).add_to_hass(hass)
+
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id({"type": "luna_climate/subscribe_ui"})
+    msg = await client.receive_json()
+    assert msg["success"]
+    sub_id = msg["id"]
+
+    button = "button.luna_wohnzimmer_schedule_details"
+    assert hass.states.get(button) is not None
+
+    # Pressed by someone else (or an automation): nothing arrives.
+    await hass.services.async_call(
+        "button", "press", {"entity_id": button}, blocking=True, context=Context(user_id=someone_else.id)
+    )
+    await hass.services.async_call("button", "press", {"entity_id": button}, blocking=True)
+
+    # Pressed by this connection's user: the zone arrives.
+    await hass.services.async_call(
+        "button", "press", {"entity_id": button}, blocking=True, context=Context(user_id=hass_admin_user.id)
+    )
+    msg = await client.receive_json()
+    assert msg["id"] == sub_id
+    assert msg["type"] == "event"
+    assert msg["event"] == {"zone_id": "wz", "entity_id": WZ}

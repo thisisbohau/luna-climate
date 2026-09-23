@@ -17,7 +17,8 @@
         "menu_options": {
           "add_zone": "Add a zone",
           "edit_zone": "Edit a zone",
-          "remove_zone": "Remove a zone"
+          "remove_zone": "Remove a zone",
+          "presence": "Home & away"
         }
       },
       "add_zone": {
@@ -27,15 +28,15 @@
           "thermostats": "Thermostats",
           "temp_sensors": "Temperature sensors",
           "linked_devices": "Linked devices",
-          "presence_entities": "Presence trackers",
-          "humidity_sensors": "Humidity sensors"
+          "humidity_sensors": "Humidity sensors",
+          "away_enabled": "Follows home/away"
         },
         "data_description": {
           "thermostats": "Climate entities that regulate themselves. They receive the zone's target temperature.",
           "temp_sensors": "What measures the zone. Leave empty to fall back to the thermostats' own readings. Required when the zone has linked devices.",
           "linked_devices": "Switches with no control loop of their own, such as a towel warmer. Luna switches them against the measured temperature.",
-          "presence_entities": "When all of these are off, the zone falls back to its away temperature. Leave empty to disable away handling for this zone.",
-          "humidity_sensors": "Optional. Leave empty to use the humidity sensors on the same devices as the zone's temperature sensors and thermostats."
+          "humidity_sensors": "Optional. Leave empty to use the humidity sensors on the same devices as the zone's temperature sensors and thermostats.",
+          "away_enabled": "Drop to the away temperature when nobody is home. Turn off for rooms that should keep their schedule regardless."
         }
       },
       "edit_zone": {
@@ -51,14 +52,21 @@
           "thermostats": "Thermostats",
           "temp_sensors": "Temperature sensors",
           "linked_devices": "Linked devices",
-          "presence_entities": "Presence trackers",
-          "humidity_sensors": "Humidity sensors"
+          "humidity_sensors": "Humidity sensors",
+          "away_enabled": "Follows home/away"
         }
       },
       "remove_zone": {
         "title": "Remove a zone",
         "data": {
           "zone_id": "Zone"
+        }
+      },
+      "presence": {
+        "title": "Home & away",
+        "description": "One list for the whole house. When every tracker is off (or not_home), all zones that follow away drop to their away temperature.",
+        "data": {
+          "presence_entities": "Presence trackers"
         }
       }
     },
@@ -125,6 +133,16 @@
       },
       "night_avg_temp": {
         "name": "Night average temperature"
+      }
+    },
+    "binary_sensor": {
+      "home": {
+        "name": "Home"
+      }
+    },
+    "button": {
+      "details": {
+        "name": "Schedule & details"
       }
     }
   },

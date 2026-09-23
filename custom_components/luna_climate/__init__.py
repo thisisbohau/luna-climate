@@ -16,7 +16,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_ZONES, DOMAIN
+from .const import CONF_AWAY_ENABLED, CONF_PRESENCE_ENTITIES, CONF_ZONES, DOMAIN
 from .engine import LunaEngine
 from .frontend_assets import async_register_frontend
 from .services import async_register_services
@@ -28,6 +28,8 @@ _LOGGER = logging.getLogger(__name__)
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CLIMATE,
     Platform.NUMBER,
     Platform.SELECT,
@@ -71,7 +73,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool
     entry.runtime_data = LunaRuntime(store=store, engine=engine)
 
     zones = list(entry.options.get(CONF_ZONES, []))
-    await engine.async_start(zones)
+    await engine.async_start(zones, list(entry.options.get(CONF_PRESENCE_ENTITIES, [])))
 
     # Forget runtime state for zones the user has deleted.
     configured = {zone["zone_id"] for zone in zones}
@@ -85,6 +87,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool:
+    """Move per-zone presence trackers to the single household list.
+
+    1.1 kept presence entities on each zone. 1.2 has one list for the house
+    and a per-zone "follows away" switch. A zone that had trackers keeps
+    following away; a zone that had none keeps ignoring it, so behaviour
+    does not change underneath anyone.
+    """
+    if entry.version > 1:
+        return False
+    if entry.version == 1 and entry.minor_version < 2:
+        options = dict(entry.options)
+        presence: list[str] = list(options.get(CONF_PRESENCE_ENTITIES, []))
+        zones = []
+        for raw in options.get(CONF_ZONES, []):
+            zone = dict(raw)
+            own = list(zone.pop(CONF_PRESENCE_ENTITIES, None) or [])
+            for entity_id in own:
+                if entity_id not in presence:
+                    presence.append(entity_id)
+            zone.setdefault(CONF_AWAY_ENABLED, bool(own))
+            zones.append(zone)
+        options[CONF_ZONES] = zones
+        options[CONF_PRESENCE_ENTITIES] = presence
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
+        _LOGGER.info("Migrated Luna Climate presence to a single household list")
     return True
 
 

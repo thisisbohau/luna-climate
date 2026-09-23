@@ -18,7 +18,8 @@
 
 import { LitElement, css, html, nothing, svg, unsafeCSS, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
-import { fireEvent, haptic } from "./actions";
+import { openZoneDialog } from "./zone-dialog";
+import { haptic } from "./actions";
 import { LUNA, tint } from "./colors";
 import { localize, type StringKey } from "./i18n";
 import { ScheduleController, renderScheduleStrip, scheduleStripStyles } from "./schedule-strip";
@@ -313,7 +314,11 @@ export class LunaZoneCard extends LitElement {
   }
 
   private moreInfo(): void {
-    if (this.config) fireEvent(this, "hass-more-info", { entityId: this.config.entity });
+    if (this.config) openZoneDialog(this.config.entity, "overview", this.hass);
+  }
+
+  private openSchedule(): void {
+    if (this.config) openZoneDialog(this.config.entity, "schedule", this.hass);
   }
 
   // -- rendering ---------------------------------------------------------
@@ -458,6 +463,7 @@ export class LunaZoneCard extends LitElement {
               hass,
               schedule: this.scheduleCtl.schedule,
               source,
+              onOpen: () => this.openSchedule(),
               onResume: () => void this.call("resume_schedule"),
             })}
 

@@ -6,6 +6,7 @@
  */
 
 import type { ActionConfig, HomeAssistant } from "./types";
+import { openZoneDialog } from "./zone-dialog";
 
 export function fireEvent(
   node: EventTarget,
@@ -47,7 +48,12 @@ export async function runAction(
 
   switch (action.action) {
     case "more-info":
-      if (target) fireEvent(node, "hass-more-info", { entityId: target });
+      // A Luna zone opens its own detail view instead of the stock dialog.
+      if (target && hass.states[target]?.attributes.luna_zone_id !== undefined) {
+        openZoneDialog(target, "overview", hass);
+      } else if (target) {
+        fireEvent(node, "hass-more-info", { entityId: target });
+      }
       return;
 
     case "toggle":

@@ -100,16 +100,31 @@ Highest priority first:
 
 1. **Boost** — a temporary target with an expiry. Setting a target ends it; a second boost restarts the timer instead of stacking
 2. **Manual mode** — the zone's own setpoint, schedule ignored
-3. **Away** — every presence entity of the zone is off. Away only ever lowers the target: an `off` block stays off
+3. **Away** — nobody is home and the zone follows away mode. Away only ever lowers the target: an `off` block stays off
 4. **Schedule** — the block in force right now
 
 The active source is visible on the climate entity as `luna_source`.
 
 ### Away
 
-A zone is away when *all* of its presence entities are off. A zone with no
-presence entities is never away. An unknown or unavailable tracker does not
-count as away — otherwise a restart would cool the house down.
+Home/away is one household-wide state. The presence entities are picked
+once under **Configure → Presence** (`person`, `device_tracker`,
+`input_boolean` or `binary_sensor`), and the house is away when *all* of
+them are away. `person` and `device_tracker` count as home when they read
+`home`; the others when they are `on`. With no presence entities the house
+is never away. An unknown or unavailable tracker does not count as away,
+because otherwise a restart would cool the house down.
+
+`binary_sensor.luna_climate_home` shows the result: on while anyone is home.
+
+Each zone decides whether it follows away mode with the **Follows home/away**
+option under **Configure → Edit zone**. It is on by default. A bathroom that should stay on
+schedule regardless can turn it off. The away setpoint remains per zone
+(`number.luna_<zone>_away_temperature`).
+
+> Upgrading from 0.3: presence entities used to be picked per zone. They are
+> merged into the global list automatically, and zones that had none are set
+> not to follow away mode, so nothing changes behaviour.
 
 ### Precomfort
 
@@ -187,6 +202,9 @@ plumbing are in place, the compressor logic is not.
 | `sensor.luna_<zone>_scheduled_temperature` | The block value alone, with `luna_block_start` / `luna_block_end` |
 | `sensor.luna_<zone>_boost_ends_at` | Timestamp, empty when idle |
 | `sensor.luna_<zone>_lowest_battery` | See below |
+| `button.luna_<zone>_schedule_details` | On the zone's device page: opens the detail view and schedule editor in your browser |
+
+Plus one entity for the whole house: `binary_sensor.luna_climate_home`.
 
 ### Battery reporting
 
@@ -209,6 +227,29 @@ is set. It is an attribute for the frontend to render, not a notification.
 
 The integration ships four cards and loads them itself, so no dashboard
 resource needs adding. After updating, reload the browser once.
+
+### Detail view and schedule editor
+
+Tapping a zone card opens its detail view; tapping the schedule strip opens
+it on the schedule. The same view opens from **Settings → Devices &
+services → Luna Climate → *zone* → Schedule & details**, and from any
+`more-info` action on a Luna zone (such as holding the boost badge).
+
+- **Overview** shows current and target temperature, humidity, the active
+  source, boost buttons, home/away, every thermostat, sensor and linked
+  device with its state, batteries and the zone's settings. Tap any row to
+  open Home Assistant's own dialog for that entity.
+- **Schedule** edits the week one day at a time:
+  - drag a handle to move a start time (15-minute steps; arrow keys work too)
+  - tap a block to set Off, a temperature from 18 to 25 °, or Max, or to type
+    exact times
+  - **Add block** splits the selected block, **Remove** deletes it
+  - **Copy day** copies the day onto other weekdays
+  - the hatched section at the start of a day is the previous day's last
+    block carrying over midnight
+
+  Nothing is written until **Save**, and closing with unsaved changes asks
+  first.
 
 ### `custom:luna-zone-card`
 
@@ -261,7 +302,7 @@ type: custom:luna-boost-badge
 entity: climate.luna_bad
 duration: 30          # optional
 show_humidity: true   # optional, shows "19.8° · 52%" while idle
-hold_action:          # optional, default: more-info
+hold_action:          # optional, default: opens the detail view
   action: more-info
 ```
 
@@ -329,6 +370,8 @@ Used by the cards, and available to anything else:
 - `luna_climate/zones` — every zone with state, schedule, settings and device lists
 - `luna_climate/schedule/get` — `{zone_id}`
 - `luna_climate/schedule/set` — `{zone_id, schedule}`
+- `luna_climate/subscribe_ui` — events asking this user's browser to open a
+  zone's detail view (sent by the device-page button)
 
 All logic lives in Python and every part of it is exposed as an entity, so a
 card broken by a Home Assistant frontend update is a cosmetic problem rather

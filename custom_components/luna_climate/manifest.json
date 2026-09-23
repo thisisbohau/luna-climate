@@ -2,7 +2,7 @@
   "domain": "luna_climate",
   "name": "Luna Climate",
   "codeowners": [
-    "@davidbohaumilitzky"
+    "@thisisbohau"
   ],
   "config_flow": true,
   "dependencies": [
@@ -10,11 +10,11 @@
     "http",
     "websocket_api"
   ],
-  "documentation": "https://github.com/davidbohaumilitzky/luna-climate",
+  "documentation": "https://github.com/thisisbohau/luna-climate",
   "integration_type": "hub",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/davidbohaumilitzky/luna-climate/issues",
+  "issue_tracker": "https://github.com/thisisbohau/luna-climate/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.3.0"
+  "version": "0.4.0"
 }

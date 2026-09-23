@@ -7,7 +7,7 @@
  *   type: custom:luna-boost-badge
  *   entity: climate.luna_bad
  *   duration: 30            # minutes, default 30
- *   hold_action:            # default: open the zone's more-info dialog
+ *   hold_action:            # default: open the zone's detail view
  *     action: more-info
  */
 

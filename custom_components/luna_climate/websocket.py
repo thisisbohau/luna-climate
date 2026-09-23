@@ -12,6 +12,7 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 
 from .const import (
     DOMAIN,
@@ -25,6 +26,7 @@ from .const import (
     SET_HYSTERESIS,
     SET_MIN_CYCLE,
     SET_NIGHT_TEMP,
+    SIGNAL_OPEN_UI,
     VALUE_MAX,
     VALUE_OFF,
 )
@@ -34,6 +36,7 @@ from .schedule import ScheduleError
 WS_ZONES = f"{DOMAIN}/zones"
 WS_GET_SCHEDULE = f"{DOMAIN}/schedule/get"
 WS_SET_SCHEDULE = f"{DOMAIN}/schedule/set"
+WS_SUBSCRIBE_UI = f"{DOMAIN}/subscribe_ui"
 
 
 def _engines(hass: HomeAssistant) -> list[LunaEngine]:
@@ -85,7 +88,7 @@ def _zone_payload(engine: LunaEngine, zone_id: str) -> dict[str, Any]:
             "thermostats": zone.thermostats,
             "temp_sensors": zone.temp_sensors,
             "linked_devices": zone.linked_devices,
-            "presence_entities": zone.presence_entities,
+            "away_enabled": zone.away_enabled,
             "humidity_sensors": engine.humidity_sources(zone_id),
         },
     }
@@ -101,6 +104,7 @@ def async_register_websocket_api(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, _ws_zones)
     websocket_api.async_register_command(hass, _ws_get_schedule)
     websocket_api.async_register_command(hass, _ws_set_schedule)
+    websocket_api.async_register_command(hass, _ws_subscribe_ui)
 
 
 @websocket_api.websocket_command({vol.Required("type"): WS_ZONES})
@@ -125,10 +129,19 @@ def _ws_zones(
         }
         break
 
+    presence: dict[str, Any] = {"entities": [], "everyone_away": False}
+    for engine in _engines(hass):
+        presence = {
+            "entities": list(engine.presence_entities),
+            "everyone_away": engine.everyone_away,
+        }
+        break
+
     connection.send_result(
         msg["id"],
         {
             "zones": zones,
+            "presence": presence,
             "precomfort_active": precomfort,
             "global": night,
             "limits": {
@@ -186,3 +199,35 @@ async def _ws_set_schedule(
     connection.send_result(
         msg["id"], {"schedule": engine.get_schedule(msg["zone_id"])}
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): WS_SUBSCRIBE_UI})
+@callback
+def _ws_subscribe_ui(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Stream "open this zone's detail view" requests to the frontend.
+
+    The card bundle subscribes on every page. A request carries the user
+    who pressed the device-page button and only reaches that user's
+    connections; presses without a user (an automation) go nowhere.
+    """
+
+    @callback
+    def _forward(request: dict[str, Any]) -> None:
+        user_id = request.get("user_id")
+        if user_id is None or connection.user is None or connection.user.id != user_id:
+            return
+        connection.send_message(
+            websocket_api.event_message(
+                msg["id"],
+                {"zone_id": request["zone_id"], "entity_id": request.get("entity_id")},
+            )
+        )
+
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(
+        hass, SIGNAL_OPEN_UI, _forward
+    )
+    connection.send_result(msg["id"])

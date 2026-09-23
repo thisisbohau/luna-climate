@@ -7,8 +7,9 @@ Resolution order, highest priority first:
 
 1. **Boost** -- a temporary target with an expiry.
 2. **Manual mode** -- the zone's own setpoint, schedule ignored.
-3. **Away** -- every presence entity of the zone is off, and precomfort is
-   not suppressing away. Falls back to the zone's away temperature.
+3. **Away** -- every household presence tracker says nobody is home, the
+   zone follows away, and precomfort is not suppressing it. Lowers the
+   target to the zone's away temperature; an off block stays off.
 4. **Schedule** -- the block in force right now.
 
 The resolved value is one of ``off``, ``max`` or a target temperature.
@@ -45,6 +46,7 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
+    STATE_HOME,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -60,10 +62,10 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_AWAY_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_LINKED_DEVICES,
     CONF_NAME,
-    CONF_PRESENCE_ENTITIES,
     CONF_TEMP_SENSORS,
     CONF_THERMOSTATS,
     CONF_ZONE_ID,
@@ -96,6 +98,10 @@ _LOGGER = logging.getLogger(__name__)
 #: it is what recovers a device that drifted away behind our back.
 TICK = dt.timedelta(minutes=1)
 
+#: States that mean "home": input_boolean / binary_sensor report ``on``,
+#: person / device_tracker report ``home``.
+HOME_STATES = frozenset({STATE_ON, STATE_HOME})
+
 SOURCE_BOOST = "boost"
 SOURCE_MANUAL = "manual"
 SOURCE_AWAY = "away"
@@ -112,7 +118,7 @@ class ZoneConfig:
     thermostats: list[str] = field(default_factory=list)
     temp_sensors: list[str] = field(default_factory=list)
     linked_devices: list[str] = field(default_factory=list)
-    presence_entities: list[str] = field(default_factory=list)
+    away_enabled: bool = True
     humidity_sensors: list[str] = field(default_factory=list)
 
     @classmethod
@@ -124,7 +130,7 @@ class ZoneConfig:
             thermostats=list(raw.get(CONF_THERMOSTATS) or []),
             temp_sensors=list(raw.get(CONF_TEMP_SENSORS) or []),
             linked_devices=list(raw.get(CONF_LINKED_DEVICES) or []),
-            presence_entities=list(raw.get(CONF_PRESENCE_ENTITIES) or []),
+            away_enabled=bool(raw.get(CONF_AWAY_ENABLED, True)),
             humidity_sensors=list(raw.get(CONF_HUMIDITY_SENSORS) or []),
         )
 
@@ -189,21 +195,28 @@ class LunaEngine:
         self._applying = False
         self._dirty = False
         self._humidity_sources: dict[str, list[str]] = {}
+        self.presence_entities: list[str] = []
 
     # -- lifecycle --------------------------------------------------------
 
-    async def async_start(self, zones: list[dict[str, Any]]) -> None:
-        """Start the engine for the given zone configuration."""
-        self.set_zones(zones)
+    async def async_start(
+        self, zones: list[dict[str, Any]], presence: list[str] | None = None
+    ) -> None:
+        """Start the engine for the given zones and presence trackers."""
+        self.set_zones(zones, presence)
         self._unsub_tick = async_track_time_interval(self.hass, self._on_tick, TICK)
         self._resubscribe()
         await self.async_apply_all()
 
-    def set_zones(self, zones: list[dict[str, Any]]) -> None:
-        """Replace the zone configuration."""
+    def set_zones(
+        self, zones: list[dict[str, Any]], presence: list[str] | None = None
+    ) -> None:
+        """Replace the zone configuration and, if given, the presence list."""
         self.zones = {
             raw[CONF_ZONE_ID]: ZoneConfig.from_dict(raw) for raw in zones
         }
+        if presence is not None:
+            self.presence_entities = list(presence)
         self._resubscribe()
 
     async def async_stop(self) -> None:
@@ -231,10 +244,9 @@ class LunaEngine:
             zone.zone_id: self._discover_humidity(zone) for zone in self.zones.values()
         }
 
-        watched: set[str] = set()
+        watched: set[str] = set(self.presence_entities)
         for zone in self.zones.values():
             watched.update(zone.temp_sensors)
-            watched.update(zone.presence_entities)
             watched.update(zone.linked_devices)
             watched.update(self._humidity_sources.get(zone.zone_id, []))
         if not watched:
@@ -258,11 +270,12 @@ class LunaEngine:
 
         # Anyone arriving home cancels the precomfort grace period; it has
         # done its job.
-        if self._precomfort_until is not None and new.state == STATE_ON:
-            for zone in self.zones.values():
-                if entity_id in zone.presence_entities:
-                    self.clear_precomfort()
-                    break
+        if (
+            self._precomfort_until is not None
+            and entity_id in self.presence_entities
+            and new.state in HOME_STATES
+        ):
+            self.clear_precomfort()
 
         self.hass.async_create_task(self.async_apply_all())
 
@@ -276,24 +289,33 @@ class LunaEngine:
             _LOGGER.exception("Zone %s has an unreadable schedule", zone_id)
             return []
 
-    def is_away(self, zone: ZoneConfig) -> bool:
-        """True when nobody tracked by this zone is home.
+    @property
+    def everyone_away(self) -> bool:
+        """True when every presence tracker says nobody is home.
 
-        A zone with no presence entities is never away.
+        With no trackers configured the house is never away. A tracker that
+        is unknown or unavailable counts as home -- otherwise a restart, or
+        a phone that has not reported yet, would cool the house down.
         """
-        if not zone.presence_entities:
+        if not self.presence_entities:
             return False
-        if self.precomfort_active:
-            return False
-        for entity_id in zone.presence_entities:
+        for entity_id in self.presence_entities:
             state = self.hass.states.get(entity_id)
             if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                # An unknown tracker must not be read as "away" -- that
-                # would cool the house down on a restart.
                 return False
-            if state.state == STATE_ON:
+            if state.state in HOME_STATES:
                 return False
         return True
+
+    def is_away(self, zone: ZoneConfig) -> bool:
+        """True when this zone should run its away temperature.
+
+        Presence is global; each zone only decides whether it follows it.
+        Precomfort suppresses away for every zone.
+        """
+        if not zone.away_enabled or self.precomfort_active:
+            return False
+        return self.everyone_away
 
     @property
     def precomfort_active(self) -> bool:

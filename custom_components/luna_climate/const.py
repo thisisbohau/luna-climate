@@ -24,6 +24,7 @@ CONF_TEMP_SENSORS: Final = "temp_sensors"
 CONF_LINKED_DEVICES: Final = "linked_devices"
 CONF_PRESENCE_ENTITIES: Final = "presence_entities"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
+CONF_AWAY_ENABLED: Final = "away_enabled"
 
 # --- runtime settings (stored in the Store, editable via entities) --------
 
@@ -91,6 +92,8 @@ ATTR_VALUE: Final = "value"
 # --- dispatcher -----------------------------------------------------------
 
 SIGNAL_UPDATE: Final = f"{DOMAIN}_update"
+#: Fired when someone asks for a zone's detail view (the device page button).
+SIGNAL_OPEN_UI: Final = f"{DOMAIN}_open_ui"
 
 # --- battery --------------------------------------------------------------
 

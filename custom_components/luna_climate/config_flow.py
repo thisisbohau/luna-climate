@@ -1,7 +1,8 @@
 """Config and options flow for Luna Climate.
 
-A single config entry acts as the hub. Zones live in ``entry.options`` and
-are managed through the options flow: add, edit, remove.
+A single config entry acts as the hub. Zones and the household's presence
+trackers live in ``entry.options`` and are managed through the options
+flow: add, edit and remove zones, and pick who counts for home/away.
 
 Only structural configuration lives here -- which entity plays which role.
 Everything tunable (temperatures, hysteresis, the night window) is a
@@ -24,6 +25,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_AWAY_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_LINKED_DEVICES,
     CONF_NAME,
@@ -58,13 +60,15 @@ ZONE_SCHEMA = vol.Schema(
                 domain="sensor", device_class="humidity", multiple=True
             )
         ),
-        vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): selector.EntitySelector(
-            selector.EntitySelectorConfig(
-                domain=["input_boolean", "person", "device_tracker", "binary_sensor"],
-                multiple=True,
-            )
-        ),
+        vol.Optional(CONF_AWAY_ENABLED, default=True): selector.BooleanSelector(),
     }
+)
+
+PRESENCE_SELECTOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(
+        domain=["input_boolean", "person", "device_tracker", "binary_sensor"],
+        multiple=True,
+    )
 )
 
 
@@ -88,6 +92,7 @@ class LunaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Create the single Luna Climate hub entry."""
 
     VERSION = 1
+    MINOR_VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -98,7 +103,9 @@ class LunaConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is None:
             return self.async_show_form(step_id="user", data_schema=vol.Schema({}))
         return self.async_create_entry(
-            title="Luna Climate", data={}, options={CONF_ZONES: []}
+            title="Luna Climate",
+            data={},
+            options={CONF_ZONES: [], CONF_PRESENCE_ENTITIES: []},
         )
 
     @staticmethod
@@ -119,8 +126,21 @@ class LunaOptionsFlow(OptionsFlow):
     def _zones(self) -> list[dict[str, Any]]:
         return list(self.config_entry.options.get(CONF_ZONES, []))
 
-    async def _async_save(self, zones: list[dict[str, Any]]) -> ConfigFlowResult:
-        return self.async_create_entry(data={CONF_ZONES: zones})
+    @property
+    def _presence(self) -> list[str]:
+        return list(self.config_entry.options.get(CONF_PRESENCE_ENTITIES, []))
+
+    async def _async_save(
+        self,
+        zones: list[dict[str, Any]] | None = None,
+        presence: list[str] | None = None,
+    ) -> ConfigFlowResult:
+        return self.async_create_entry(
+            data={
+                CONF_ZONES: self._zones if zones is None else zones,
+                CONF_PRESENCE_ENTITIES: self._presence if presence is None else presence,
+            }
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -129,7 +149,32 @@ class LunaOptionsFlow(OptionsFlow):
         menu = ["add_zone"]
         if self._zones:
             menu += ["edit_zone", "remove_zone"]
+        menu.append("presence")
         return self.async_show_menu(step_id="init", menu_options=menu)
+
+    # -- presence ---------------------------------------------------------
+
+    async def async_step_presence(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick the trackers that decide whether anyone is home.
+
+        One list for the whole house: when every one of them is off, all
+        zones that follow away drop to their away temperature.
+        """
+        if user_input is not None:
+            return await self._async_save(
+                presence=list(user_input.get(CONF_PRESENCE_ENTITIES) or [])
+            )
+        schema = vol.Schema(
+            {vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): PRESENCE_SELECTOR}
+        )
+        return self.async_show_form(
+            step_id="presence",
+            data_schema=self.add_suggested_values_to_schema(
+                schema, {CONF_PRESENCE_ENTITIES: self._presence}
+            ),
+        )
 
     # -- add --------------------------------------------------------------
 

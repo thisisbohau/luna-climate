@@ -12,7 +12,7 @@
 
 import { LitElement, css, html, nothing, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
-import { fireEvent } from "./actions";
+import { openZoneDialog } from "./zone-dialog";
 import { tint } from "./colors";
 import { localize, type StringKey } from "./i18n";
 import { ScheduleController, renderScheduleStrip, scheduleStripStyles } from "./schedule-strip";
@@ -127,7 +127,11 @@ export class LunaZoneCompactCard extends LitElement {
   }
 
   private moreInfo(): void {
-    if (this.config) fireEvent(this, "hass-more-info", { entityId: this.config.entity });
+    if (this.config) openZoneDialog(this.config.entity, "overview", this.hass);
+  }
+
+  private openSchedule(): void {
+    if (this.config) openZoneDialog(this.config.entity, "schedule", this.hass);
   }
 
   protected render() {
@@ -208,7 +212,8 @@ export class LunaZoneCompactCard extends LitElement {
           hass,
           schedule: this.scheduleCtl.schedule,
           source: zone.source,
-          onResume: () => void hass.callService("luna_climate", "resume_schedule", { entity_id: zone.entityId }),
+          onOpen: () => this.openSchedule(),
+              onResume: () => void hass.callService("luna_climate", "resume_schedule", { entity_id: zone.entityId }),
         })}
       </ha-card>
     `;

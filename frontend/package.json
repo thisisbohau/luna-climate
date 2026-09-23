@@ -1,13 +1,14 @@
 {
   "name": "luna-climate-cards",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Lovelace cards for the Luna Climate integration",
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && esbuild src/index.ts --bundle --format=esm --target=es2021 --minify --legal-comments=none --outfile=../custom_components/luna_climate/frontend/luna-climate-cards.js",
     "watch": "esbuild src/index.ts --bundle --format=esm --target=es2021 --watch --outfile=../custom_components/luna_climate/frontend/luna-climate-cards.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild src/schedule-model.ts --format=esm --outdir=.test-build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "lit": "^3.2.1"
