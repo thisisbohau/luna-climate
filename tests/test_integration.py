@@ -35,19 +35,25 @@ TRV = "climate.trv_wohnzimmer"
 TOWEL = "input_boolean.towel"
 WZ = "climate.luna_wohnzimmer"
 BAD = "climate.luna_bad"
-ALL_DAYS = [0, 1, 2, 3, 4, 5, 6]
+AWAY = "number.luna_climate_away_temperature"
+DAY_TYPE = "sensor.luna_climate_day_type"
 
-WZ_SCHEDULE = [
-    {"weekdays": ALL_DAYS, "start": "06:00", "value": 21},
-    {"weekdays": ALL_DAYS, "start": "08:30", "value": "off"},
-    {"weekdays": ALL_DAYS, "start": "17:00", "value": 21.5},
-    {"weekdays": ALL_DAYS, "start": "22:30", "value": 18},
+WZ_DAY = [
+    {"start": "06:00", "value": 21},
+    {"start": "08:30", "value": "off"},
+    {"start": "17:00", "value": 21.5},
+    {"start": "22:30", "value": 18},
 ]
-BAD_SCHEDULE = [
-    {"weekdays": ALL_DAYS, "start": "05:30", "value": 22},
-    {"weekdays": ALL_DAYS, "start": "08:00", "value": "off"},
-    {"weekdays": ALL_DAYS, "start": "18:00", "value": "max"},
-    {"weekdays": ALL_DAYS, "start": "22:00", "value": "off"},
+#: The free-day schedule used where the day type matters: a late start.
+WZ_FREE = [
+    {"start": "08:00", "value": 22},
+    {"start": "23:00", "value": 18},
+]
+BAD_DAY = [
+    {"start": "05:30", "value": 22},
+    {"start": "08:00", "value": "off"},
+    {"start": "18:00", "value": "max"},
+    {"start": "22:00", "value": "off"},
 ]
 
 ZONES = [
@@ -163,8 +169,10 @@ async def house(hass: HomeAssistant, freezer) -> MockConfigEntry:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    await call(hass, "set_schedule", {"entity_id": WZ, "schedule": WZ_SCHEDULE})
-    await call(hass, "set_schedule", {"entity_id": BAD, "schedule": BAD_SCHEDULE})
+    # The same day on both schedules, so most tests do not depend on the
+    # day type; the workday tests set their own.
+    await call(hass, "set_schedule", {"entity_id": WZ, "workday": WZ_DAY, "free": WZ_DAY})
+    await call(hass, "set_schedule", {"entity_id": BAD, "workday": BAD_DAY, "free": BAD_DAY})
     await hass.async_block_till_done()
     return entry
 
@@ -178,24 +186,34 @@ async def test_entities_are_created_with_luna_prefix(hass: HomeAssistant, house)
     expected = [
         WZ,
         "select.luna_wohnzimmer_mode",
-        "switch.luna_wohnzimmer_night_mode",
-        "number.luna_wohnzimmer_away_temperature",
-        "number.luna_wohnzimmer_night_temperature",
         "number.luna_wohnzimmer_boost_offset",
         "number.luna_wohnzimmer_hysteresis",
         "number.luna_wohnzimmer_minimum_cycle_time",
         "sensor.luna_wohnzimmer_scheduled_temperature",
         "sensor.luna_wohnzimmer_boost_ends_at",
-        "sensor.luna_wohnzimmer_lowest_battery",
-        "sensor.luna_wohnzimmer_night_average_temperature",
+        "binary_sensor.luna_wohnzimmer_battery",
+        "button.luna_wohnzimmer_schedule_details",
         BAD,
+        AWAY,
+        DAY_TYPE,
         "number.luna_climate_precomfort_timeout",
-        "time.luna_climate_night_start",
-        "time.luna_climate_night_end",
+        "binary_sensor.luna_climate_home",
     ]
     for entity_id in expected:
         assert registry.async_get(entity_id) is not None, entity_id
         assert hass.states.get(entity_id) is not None, entity_id
+
+    retired = [
+        "switch.luna_wohnzimmer_night_mode",
+        "number.luna_wohnzimmer_away_temperature",
+        "number.luna_wohnzimmer_night_temperature",
+        "sensor.luna_wohnzimmer_lowest_battery",
+        "sensor.luna_wohnzimmer_night_average_temperature",
+        "time.luna_climate_night_start",
+        "time.luna_climate_night_end",
+    ]
+    for entity_id in retired:
+        assert hass.states.get(entity_id) is None, entity_id
 
     assert attr(hass, WZ, "luna_zone_id") == "wz"
     assert attr(hass, WZ, "luna_zone_name") == "Wohnzimmer"
@@ -430,35 +448,30 @@ async def test_mode_select_and_resume_service(hass: HomeAssistant, house, freeze
 
 
 async def test_tunables_change_behaviour(hass: HomeAssistant, house, freezer) -> None:
-    """Numbers are live: away temperature and hysteresis take effect at once."""
+    """Numbers are live: the global away temperature takes effect at once."""
     await goto(hass, freezer, "17:05")
-    await call(
-        hass, "set_value", {"entity_id": "number.luna_wohnzimmer_away_temperature", "value": 15.5}, domain="number"
-    )
+    await call(hass, "set_value", {"entity_id": AWAY, "value": 15.5}, domain="number")
     await call(hass, "turn_off", {"entity_id": "input_boolean.david_home"}, domain="input_boolean")
     await goto(hass, freezer, "17:06")
     assert trv(hass) == ("heat", 15.5)
 
 
 async def test_state_survives_a_reload(hass: HomeAssistant, house, freezer) -> None:
-    """Schedules, tunables and night settings persist across a restart of the entry."""
-    await call(
-        hass, "set_value", {"entity_id": "number.luna_wohnzimmer_away_temperature", "value": 14}, domain="number"
-    )
-    await call(hass, "set_value", {"entity_id": "time.luna_climate_night_start", "time": "21:45:00"}, domain="time")
-    await call(hass, "turn_on", {"entity_id": "switch.luna_wohnzimmer_night_mode"}, domain="switch")
+    """Schedules and tunables persist across a restart of the entry."""
+    await call(hass, "set_value", {"entity_id": AWAY, "value": 14}, domain="number")
+    await call(hass, "set_schedule", {"entity_id": WZ, "free": WZ_FREE})
 
     assert await hass.config_entries.async_reload(house.entry_id)
     await hass.async_block_till_done()
 
-    assert hass.states.get("number.luna_wohnzimmer_away_temperature").state == "14.0"
-    assert hass.states.get("time.luna_climate_night_start").state == "21:45:00"
-    assert hass.states.get("switch.luna_wohnzimmer_night_mode").state == "on"
+    assert hass.states.get(AWAY).state == "14.0"
+
+    def stored(day):
+        return [{"start": b["start"], "value": b["value"] if b["value"] == "off" else float(b["value"])} for b in day]
+
     response = await call(hass, "get_schedule", {"entity_id": WZ}, return_response=True)
-    assert response["schedules"][WZ] == [
-        {"weekdays": ALL_DAYS, "start": b["start"], "value": float(b["value"]) if b["value"] != "off" else "off"}
-        for b in WZ_SCHEDULE
-    ]
+    # Setting only the free day left the workday schedule alone.
+    assert response["schedules"][WZ] == {"workday": stored(WZ_DAY), "free": stored(WZ_FREE)}
     await goto(hass, freezer, "17:05")
     assert trv(hass) == ("heat", 21.5)
 
@@ -494,10 +507,10 @@ async def test_services_reject_bad_input(hass: HomeAssistant, house) -> None:
         await call(hass, "set_target", {"entity_id": WZ, "value": "warm"})
     with pytest.raises(ServiceValidationError):
         await call(hass, "cool_for", {"entity_id": WZ})
-    with pytest.raises(Exception):  # noqa: B017 - schedule errors surface as-is
-        await call(
-            hass, "set_schedule", {"entity_id": WZ, "schedule": [{"weekdays": [0], "start": "06:00", "value": 40}]}
-        )
+    with pytest.raises(ServiceValidationError):
+        await call(hass, "set_schedule", {"entity_id": WZ, "workday": [{"start": "06:00", "value": 40}]})
+    with pytest.raises(Exception):  # noqa: B017 - neither day type given
+        await call(hass, "set_schedule", {"entity_id": WZ})
 
 
 async def test_websocket_api(hass: HomeAssistant, house, hass_ws_client) -> None:
@@ -511,17 +524,31 @@ async def test_websocket_api(hass: HomeAssistant, house, hass_ws_client) -> None
     assert set(zones) == {"wz", "bad"}
     assert zones["wz"]["current_humidity"] == 55.0
     assert zones["wz"]["devices"]["humidity_sensors"] == ["sensor.wz_hum"]
+    assert zones["wz"]["battery_low"] is False
+    assert msg["result"]["global"]["day_types"]["today"] == "workday"
+    assert msg["result"]["global"]["away_temp"] == 16.0
 
     await client.send_json_auto_id({"type": "luna_climate/schedule/get", "zone_id": "wz"})
     msg = await client.receive_json()
     assert msg["success"]
-    assert len(msg["result"]["schedule"]) == 4
+    assert len(msg["result"]["schedules"]["workday"]) == 4
+    assert msg["result"]["day_types"] == {
+        "yesterday": "workday", "today": "workday", "tomorrow": "workday", "from_entity": False,
+    }
+
+    await client.send_json_auto_id(
+        {"type": "luna_climate/schedule/set", "zone_id": "wz", "schedules": {"free": WZ_FREE}}
+    )
+    msg = await client.receive_json()
+    assert msg["success"]
+    assert len(msg["result"]["schedules"]["free"]) == 2
+    assert len(msg["result"]["schedules"]["workday"]) == 4
 
     await client.send_json_auto_id(
         {
             "type": "luna_climate/schedule/set",
             "zone_id": "wz",
-            "schedule": [{"weekdays": [0], "start": "25:00", "value": 20}],
+            "schedules": {"workday": [{"start": "25:00", "value": 20}]},
         }
     )
     msg = await client.receive_json()
@@ -559,7 +586,9 @@ async def test_unload(hass: HomeAssistant, house) -> None:
 
 async def test_old_per_zone_presence_is_migrated(hass: HomeAssistant, house) -> None:
     """1.1 entries move presence to the household list without changing behaviour."""
-    assert house.minor_version == 2
+    assert house.minor_version == 3
+    assert house.options["workday_entity"] is None
+    assert house.options["workday_offset"] == "tomorrow"
     assert house.options["presence_entities"] == [
         "input_boolean.david_home",
         "input_boolean.bettina_home",
@@ -648,3 +677,202 @@ async def test_details_button_reaches_only_the_pressing_user(
     assert msg["id"] == sub_id
     assert msg["type"] == "event"
     assert msg["event"] == {"zone_id": "wz", "entity_id": WZ}
+
+
+# -- workday / free day ----------------------------------------------------
+
+
+async def _use_workday_sensor(hass: HomeAssistant, house, entity_id: str, offset: str) -> None:
+    await call(hass, "set_schedule", {"entity_id": WZ, "workday": WZ_DAY, "free": WZ_FREE})
+    hass.config_entries.async_update_entry(
+        house, options={**house.options, "workday_entity": entity_id, "workday_offset": offset}
+    )
+    await hass.async_block_till_done()
+
+
+async def test_workday_sensor_for_the_next_day(hass: HomeAssistant, house, freezer) -> None:
+    """A sensor that describes tomorrow: today is what it said yesterday.
+
+    Wednesday: the sensor says Thursday is a holiday. Wednesday itself
+    keeps the workday schedule to midnight; Thursday runs the free-day
+    schedule, even after the sensor has moved on to talk about Friday and
+    even across a restart.
+    """
+    sensor = "binary_sensor.workday_tomorrow"
+    hass.states.async_set(sensor, "on")
+    await _use_workday_sensor(hass, house, sensor, "tomorrow")
+
+    await goto(hass, freezer, "07:00")
+    assert trv(hass) == ("heat", 21.0)  # Wednesday, workday (no reading from Tuesday: Mon-Fri rule)
+    assert hass.states.get(DAY_TYPE).state == "workday"
+    assert attr(hass, DAY_TYPE, "luna_tomorrow") == "workday"
+
+    # Evening: Thursday turns out to be a holiday.
+    await goto(hass, freezer, "18:00")
+    hass.states.async_set(sensor, "off")
+    await goto(hass, freezer, "18:01")
+    assert attr(hass, DAY_TYPE, "luna_tomorrow") == "free"
+    assert hass.states.get(DAY_TYPE).state == "workday"  # Wednesday is still a workday
+    assert trv(hass) == ("heat", 21.5)
+
+    # Just after midnight the sensor starts describing Friday.
+    await goto(hass, freezer, "00:00", day=24)
+    hass.states.async_set(sensor, "on")
+    await goto(hass, freezer, "00:01", day=24)
+    assert hass.states.get(DAY_TYPE).state == "free"
+    assert attr(hass, DAY_TYPE, "luna_from_entity") is True
+    assert attr(hass, DAY_TYPE, "luna_tomorrow") == "workday"
+
+    # Thursday morning: Wednesday's 22:30 block carries on until the free
+    # day's first block at 08:00 -- no 06:00 workday start.
+    await goto(hass, freezer, "06:30", day=24)
+    assert trv(hass) == ("heat", 18.0)
+    assert attr(hass, WZ, "luna_day_type") == "free"
+    await goto(hass, freezer, "09:00", day=24)
+    assert trv(hass) == ("heat", 22.0)  # the workday schedule would be off here
+
+    # A restart does not forget what Wednesday's reading was.
+    assert await hass.config_entries.async_reload(house.entry_id)
+    await hass.async_block_till_done()
+    await goto(hass, freezer, "09:05", day=24)
+    assert hass.states.get(DAY_TYPE).state == "free"
+    assert trv(hass) == ("heat", 22.0)
+
+    # Friday is a workday again.
+    await goto(hass, freezer, "06:00", day=25)
+    assert hass.states.get(DAY_TYPE).state == "workday"
+    assert trv(hass) == ("heat", 21.0)
+
+
+async def test_workday_sensor_for_the_same_day(hass: HomeAssistant, house, freezer) -> None:
+    """A sensor that describes today switches the schedule immediately."""
+    sensor = "input_boolean.workday_today"
+    hass.states.async_set(sensor, "off")
+    await _use_workday_sensor(hass, house, sensor, "today")
+
+    await goto(hass, freezer, "07:00")
+    assert hass.states.get(DAY_TYPE).state == "free"
+    assert trv(hass) == ("heat", 18.0)  # Tuesday's last block, until 08:00
+    await goto(hass, freezer, "08:00")
+    assert trv(hass) == ("heat", 22.0)
+
+    hass.states.async_set(sensor, "on")
+    await goto(hass, freezer, "09:00")
+    assert hass.states.get(DAY_TYPE).state == "workday"
+    assert trv(hass)[0] == "off"
+
+
+async def test_without_a_sensor_weekends_are_free(hass: HomeAssistant, house, freezer) -> None:
+    """With no workday sensor, Monday to Friday are workdays."""
+    await call(hass, "set_schedule", {"entity_id": WZ, "workday": WZ_DAY, "free": WZ_FREE})
+    await goto(hass, freezer, "09:00", day=25)  # Friday
+    assert trv(hass)[0] == "off"
+    await goto(hass, freezer, "09:00", day=26)  # Saturday
+    assert hass.states.get(DAY_TYPE).state == "free"
+    assert attr(hass, DAY_TYPE, "luna_from_entity") is False
+    assert trv(hass) == ("heat", 22.0)
+
+
+async def test_global_away_temperature(hass: HomeAssistant, house, freezer) -> None:
+    """One away temperature for every zone that follows away."""
+    zones = [dict(z) for z in house.options["zones"]]
+    zones[1]["away_enabled"] = True
+    hass.config_entries.async_update_entry(house, options={**house.options, "zones": zones})
+    await hass.async_block_till_done()
+
+    await call(hass, "set_value", {"entity_id": AWAY, "value": 17}, domain="number")
+    await goto(hass, freezer, "05:51")
+    await call(hass, "turn_off", {"entity_id": "input_boolean.david_home"}, domain="input_boolean")
+    await goto(hass, freezer, "06:30")
+    assert attr(hass, WZ, "luna_value") == 17.0
+    assert attr(hass, BAD, "luna_value") == 17.0
+
+
+async def test_upgrade_from_weekday_schedules(hass: HomeAssistant, hass_storage, freezer) -> None:
+    """0.4 storage: weekday blocks, per-zone away and night mode are upgraded."""
+    await hass.config.async_set_time_zone("Europe/Vienna")
+    freezer.move_to(local("12:00"))
+    hass_storage["luna_climate.store"] = {
+        "version": 1,
+        "minor_version": 1,
+        "key": "luna_climate.store",
+        "data": {
+            "zones": {
+                "wz": {
+                    "schedule": [
+                        {"weekdays": [0, 1, 2, 3, 4], "start": "06:00", "value": 21},
+                        {"weekdays": [0, 1, 2, 3, 4, 5, 6], "start": "22:30", "value": 18},
+                        {"weekdays": [5, 6], "start": "08:00", "value": 22},
+                    ],
+                    "mode": "auto",
+                    "manual_temp": 21.0,
+                    "night_mode": True,
+                    "settings": {"away_temp": 15.0, "night_temp": 19.0, "hysteresis": 0.4},
+                },
+                "bad": {
+                    "schedule": [],
+                    "mode": "auto",
+                    "manual_temp": 21.0,
+                    "night_mode": False,
+                    "settings": {"away_temp": 17.0, "night_temp": 20.0},
+                },
+                "kz": {
+                    "schedule": [],
+                    "mode": "auto",
+                    "manual_temp": 21.0,
+                    "settings": {"away_temp": 15.0},
+                },
+            },
+            "global": {"night_start": "22:00:00", "night_end": "06:00:00", "precomfort_timeout": 90},
+        },
+    }
+    hass.states.async_set("climate.valve", "heat", {"temperature": 20, "current_temperature": 20})
+    zone = {"thermostats": ["climate.valve"], "temp_sensors": [], "linked_devices": []}
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        minor_version=2,
+        options={
+            "zones": [
+                {"zone_id": "wz", "name": "Wohnzimmer", **zone},
+                {"zone_id": "bad", "name": "Bad", **zone},
+                {"zone_id": "kz", "name": "Kinderzimmer", **zone},
+            ],
+            "presence_entities": [],
+        },
+    )
+    entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    old = [
+        ("switch", "luna_wz_night_mode"),
+        ("number", "luna_wz_night_temp"),
+        ("number", "luna_wz_away_temp"),
+        ("sensor", "luna_wz_battery_min"),
+        ("sensor", "luna_wz_night_avg_temp"),
+        ("time", "luna_global_night_start"),
+    ]
+    old_ids = [
+        registry.async_get_or_create(domain, DOMAIN, unique_id, config_entry=entry).entity_id
+        for domain, unique_id in old
+    ]
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    for entity_id in old_ids:
+        assert registry.async_get(entity_id) is None, entity_id
+    assert entry.minor_version == 3
+
+    response = await call(hass, "get_schedule", {"entity_id": "climate.luna_wohnzimmer"}, return_response=True)
+    assert response["schedules"]["climate.luna_wohnzimmer"] == {
+        "workday": [{"start": "06:00", "value": 21.0}, {"start": "22:30", "value": 18.0}],
+        "free": [{"start": "08:00", "value": 22.0}, {"start": "22:30", "value": 18.0}],
+    }
+    # 15 twice, 17 once: the most common value wins.
+    assert hass.states.get(AWAY).state == "15.0"
+    assert hass.states.get("number.luna_climate_precomfort_timeout").state == "90.0"
+    assert hass.states.get("number.luna_wohnzimmer_hysteresis").state == "0.4"
+
+    saved = hass_storage["luna_climate.store"]["data"]
+    assert "schedule" not in saved["zones"]["wz"]
+    assert "night_mode" not in saved["zones"]["wz"]
+    assert "night_start" not in saved["global"]

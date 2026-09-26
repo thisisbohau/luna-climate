@@ -55,8 +55,14 @@ set_schedule:
       integration: luna_climate
       domain: climate
   fields:
-    schedule:
-      required: true
+    workday:
+      required: false
+      example: '[{"start": "05:30", "value": 21}, {"start": "08:00", "value": "off"}]'
+      selector:
+        object:
+    free:
+      required: false
+      example: '[{"start": "07:30", "value": 21}, {"start": "23:00", "value": 18}]'
       selector:
         object:
 

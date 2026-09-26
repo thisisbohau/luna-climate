@@ -18,7 +18,8 @@
           "add_zone": "Zone hinzufügen",
           "edit_zone": "Zone bearbeiten",
           "remove_zone": "Zone entfernen",
-          "presence": "Zuhause & abwesend"
+          "presence": "Zuhause & abwesend",
+          "workday": "Arbeitstage"
         }
       },
       "add_zone": {
@@ -36,7 +37,7 @@
           "temp_sensors": "Womit die Zone gemessen wird. Leer lassen, um auf die Messwerte der Thermostate zurückzufallen. Pflicht, sobald die Zone verknüpfte Geräte enthält.",
           "linked_devices": "Schalter ohne eigene Regelung, etwa ein Handtuchwärmer. Luna schaltet sie anhand der gemessenen Temperatur.",
           "humidity_sensors": "Optional. Leer lassen, um die Feuchtigkeitssensoren der Geräte zu verwenden, die bereits als Temperatursensor oder Thermostat in der Zone sind.",
-          "away_enabled": "Bei Abwesenheit auf die Abwesenheitstemperatur absenken. Ausschalten für Räume, die ihren Zeitplan immer behalten sollen."
+          "away_enabled": "Bei Abwesenheit aller auf die globale Abwesenheitstemperatur absenken. Für Räume ausschalten, die ihren Zeitplan trotzdem behalten sollen."
         }
       },
       "edit_zone": {
@@ -64,9 +65,21 @@
       },
       "presence": {
         "title": "Zuhause & abwesend",
-        "description": "Eine Liste für das ganze Haus. Sind alle Melder aus (oder not_home), fallen alle Zonen, die der Abwesenheit folgen, auf ihre Abwesenheitstemperatur.",
+        "description": "Eine Liste für das ganze Haus. Sind alle Tracker aus (oder not_home), senken alle Zonen, die Abwesenheit folgen, auf die Abwesenheitstemperatur ab.",
         "data": {
           "presence_entities": "Anwesenheitsmelder"
+        }
+      },
+      "workday": {
+        "title": "Arbeitstage",
+        "description": "Jede Zone hat einen Arbeitstag- und einen Freier-Tag-Zeitplan (Wochenende und Feiertage). Wähle den Sensor, der zwischen beiden entscheidet. Ohne Sensor gelten Montag bis Freitag als Arbeitstage.",
+        "data": {
+          "workday_entity": "Arbeitstag-Sensor",
+          "workday_offset": "Der Sensor beschreibt"
+        },
+        "data_description": {
+          "workday_entity": "Ein Binärsensor oder Input Boolean, der an einem Arbeitstag an ist, z. B. die Workday-Integration.",
+          "workday_offset": "Ein Sensor für den Folgetag (Workday mit days_offset: 1) meldet am Freitag, dass Samstag frei ist. Luna merkt sich, was er am Vortag gemeldet hat, damit am Freitag noch der Arbeitstag-Zeitplan läuft."
         }
       }
     },
@@ -88,17 +101,9 @@
         }
       }
     },
-    "switch": {
-      "night_mode": {
-        "name": "Nachtmodus"
-      }
-    },
     "number": {
       "away_temp": {
         "name": "Abwesenheitstemperatur"
-      },
-      "night_temp": {
-        "name": "Nachttemperatur"
       },
       "boost_offset": {
         "name": "Boost-Aufschlag"
@@ -113,14 +118,6 @@
         "name": "Precomfort-Zeitlimit"
       }
     },
-    "time": {
-      "night_start": {
-        "name": "Nachtbeginn"
-      },
-      "night_end": {
-        "name": "Nachtende"
-      }
-    },
     "sensor": {
       "scheduled_temp": {
         "name": "Geplante Temperatur"
@@ -128,16 +125,20 @@
       "boost_ends_at": {
         "name": "Boost endet um"
       },
-      "battery_min": {
-        "name": "Niedrigster Batteriestand"
-      },
-      "night_avg_temp": {
-        "name": "Durchschnittliche Nachttemperatur"
+      "day_type": {
+        "name": "Tagesart",
+        "state": {
+          "workday": "Arbeitstag",
+          "free": "Freier Tag"
+        }
       }
     },
     "binary_sensor": {
       "home": {
         "name": "Zuhause"
+      },
+      "zone_battery": {
+        "name": "Batterie"
       }
     },
     "button": {
@@ -185,17 +186,21 @@
     },
     "set_schedule": {
       "name": "Zeitplan setzen",
-      "description": "Ersetzt den Wochenzeitplan einer Zone.",
+      "description": "Ersetzt den Arbeitstag-Zeitplan, den Freier-Tag-Zeitplan oder beide einer Zone.",
       "fields": {
-        "schedule": {
-          "name": "Zeitplan",
-          "description": "Liste von Blöcken: weekdays (0 = Montag), start (HH:MM) und value (off, max oder 18–25)."
+        "workday": {
+          "name": "Arbeitstag",
+          "description": "Blöcke für Arbeitstage: start (HH:MM) und value (off, max oder 18–25)."
+        },
+        "free": {
+          "name": "Freier Tag",
+          "description": "Blöcke für Wochenende und Feiertage: start (HH:MM) und value (off, max oder 18–25)."
         }
       }
     },
     "get_schedule": {
       "name": "Zeitplan abrufen",
-      "description": "Gibt den Wochenzeitplan einer Zone zurück."
+      "description": "Liefert den Arbeitstag- und Freier-Tag-Zeitplan einer Zone."
     },
     "set_target": {
       "name": "Ziel setzen",
@@ -210,6 +215,14 @@
     "resume_schedule": {
       "name": "Zeitplan fortsetzen",
       "description": "Übergibt eine Zone wieder an ihren Zeitplan."
+    }
+  },
+  "selector": {
+    "workday_offset": {
+      "options": {
+        "tomorrow": "Den nächsten Tag",
+        "today": "Den aktuellen Tag"
+      }
     }
   }
 }

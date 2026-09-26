@@ -19,7 +19,7 @@ import { state } from "lit/decorators.js";
 import { LUNA, tint } from "./colors";
 import { localize, type StringKey } from "./i18n";
 import type { LunaScheduleEditor } from "./schedule-editor";
-import type { HassEntity, HomeAssistant, ScheduleBlock } from "./types";
+import type { DayType, HassEntity, HomeAssistant, ScheduleData, Schedules } from "./types";
 import {
   formatHumidity,
   formatTemp,
@@ -39,13 +39,17 @@ interface RootElement extends HTMLElement {
 
 const SETTINGS: Array<{ key: string; label: StringKey }> = [
   { key: "zone_mode", label: "mode" },
-  { key: "away_temp", label: "away_temp" },
   { key: "boost_offset", label: "boost_offset" },
   { key: "hysteresis", label: "hysteresis" },
   { key: "min_cycle", label: "min_cycle" },
-  { key: "night_mode", label: "night_mode" },
-  { key: "night_temp", label: "night_temp" },
 ];
+
+interface BatteryItem {
+  entity_id: string;
+  device: string;
+  level?: number;
+  low: boolean | null;
+}
 
 const SOURCE_LABEL: Record<ZoneSource, StringKey> = {
   schedule: "schedule",
@@ -63,7 +67,7 @@ export class LunaZoneDialog extends LitElement {
   @state() hass?: HomeAssistant;
   @state() private entityId?: string;
   @state() private tab: DialogTab = "overview";
-  @state() private schedule?: ScheduleBlock[];
+  @state() private schedule?: ScheduleData;
   @state() private saving = false;
   @state() private error?: string;
   @state() private confirmClose = false;
@@ -147,28 +151,26 @@ export class LunaZoneDialog extends LitElement {
     const stateObj = this.stateObj;
     if (!this.hass || !stateObj || !isLunaZone(stateObj)) return;
     try {
-      const res = await this.hass.callWS<{ schedule: ScheduleBlock[] }>({
+      this.schedule = await this.hass.callWS<ScheduleData>({
         type: "luna_climate/schedule/get",
         zone_id: stateObj.attributes.luna_zone_id,
       });
-      this.schedule = res.schedule;
     } catch (err) {
       this.error = String((err as { message?: string })?.message ?? err);
     }
   }
 
-  private async onSave(ev: CustomEvent<{ schedule: ScheduleBlock[] }>): Promise<void> {
+  private async onSave(ev: CustomEvent<{ schedules: Schedules }>): Promise<void> {
     const stateObj = this.stateObj;
     if (!this.hass || !stateObj) return;
     this.saving = true;
     this.error = undefined;
     try {
-      const res = await this.hass.callWS<{ schedule: ScheduleBlock[] }>({
+      this.schedule = await this.hass.callWS<ScheduleData>({
         type: "luna_climate/schedule/set",
         zone_id: stateObj.attributes.luna_zone_id,
-        schedule: ev.detail.schedule,
+        schedules: ev.detail.schedules,
       });
-      this.schedule = res.schedule;
       this.showToast(this.L("saved"));
     } catch (err) {
       this.error = String((err as { message?: string })?.message ?? err);
@@ -206,16 +208,21 @@ export class LunaZoneDialog extends LitElement {
     return Object.values(entities).find((e) => e.device_id === deviceId && e.translation_key === key)?.entity_id;
   }
 
-  private homeEntity(): HassEntity | undefined {
+  /** One of the integration's household-wide entities, by translation key. */
+  private globalEntity(key: string): HassEntity | undefined {
     const entities = this.hass?.entities;
     if (!entities) return undefined;
-    const id = Object.values(entities).find((e) => e.platform === "luna_climate" && e.translation_key === "home")?.entity_id;
+    const id = Object.values(entities).find((e) => e.platform === "luna_climate" && e.translation_key === key)?.entity_id;
     return id ? this.hass!.states[id] : undefined;
   }
 
   private batteryState(): HassEntity | undefined {
-    const id = this.settingEntity("battery_min");
+    const id = this.settingEntity("zone_battery");
     return id ? this.hass!.states[id] : undefined;
+  }
+
+  private dayName(kind: DayType | undefined): string {
+    return kind ? this.L(kind === "workday" ? "workday" : "free_day") : "–";
   }
 
   // -- rendering -----------------------------------------------------------
@@ -237,7 +244,14 @@ export class LunaZoneDialog extends LitElement {
           <span class="shape"><ha-icon .icon=${zone ? zoneIcon(zone) : "mdi:alert-circle-outline"}></ha-icon></span>
           <div class="titles">
             <h2 id="title">${zone?.name ?? this.entityId}</h2>
-            ${zone ? html`<span class="sub">${this.L(SOURCE_LABEL[zone.source] ?? "schedule")} · ${formatTemp(zone.value, hass)}</span>` : nothing}
+            ${zone
+              ? html`<span class="sub"
+                  >${this.L(SOURCE_LABEL[zone.source] ?? "schedule")} · ${formatTemp(zone.value, hass)}${stateObj?.attributes
+                    .luna_day_type
+                    ? ` · ${this.dayName(stateObj.attributes.luna_day_type)}`
+                    : ""}</span
+                >`
+              : nothing}
           </div>
           <button type="button" class="close" aria-label=${this.L("close")} @click=${() => this.close()}>
             <ha-icon icon="mdi:close"></ha-icon>
@@ -267,7 +281,7 @@ export class LunaZoneDialog extends LitElement {
           <luna-schedule-editor
             class=${zone && this.tab === "schedule" ? "" : "hidden"}
             .hass=${hass}
-            .schedule=${this.schedule}
+            .data=${this.schedule}
             .busy=${this.saving}
             .error=${this.error}
             @schedule-save=${this.onSave}
@@ -294,10 +308,12 @@ export class LunaZoneDialog extends LitElement {
     const boosting = isBoosting(zone);
     const left = boosting ? Math.max(0, zone.boostEndsAt! - Date.now()) : 0;
     const secs = Math.floor(left / 1000);
-    const home = this.homeEntity();
+    const home = this.globalEntity("home");
+    const away = this.globalEntity("away_temp");
+    const dayType = this.globalEntity("day_type");
     const battery = this.batteryState();
-    const levels = (battery?.attributes.luna_batteries ?? []) as Array<{ entity_id: string; device: string; level: number }>;
-    const flags = (battery?.attributes.luna_battery_flags ?? []) as Array<{ entity_id: string; device: string; low: boolean }>;
+    const batteries = (battery?.attributes.luna_batteries ?? []) as BatteryItem[];
+    const lowCount = batteries.filter((b) => b.low).length;
 
     const stat = (label: StringKey, value: string, icon?: string) =>
       html`<div class="stat">
@@ -341,6 +357,26 @@ export class LunaZoneDialog extends LitElement {
                 <span class="state">${this.stateObj?.attributes.luna_away_enabled === false ? L("not_following_away") : L("follows_away")}</span>
               </button>`
             : html`<div class="row static"><span class="name">${L("none")}</span></div>`}
+          ${away
+            ? html`<button type="button" class="row" @click=${() => this.moreInfo(away.entity_id)}>
+                <ha-icon icon="mdi:thermometer-low"></ha-icon>
+                <span class="name">${L("away_temp")}</span>
+                <span class="state">${formatTemp(Number(away.state), hass)}</span>
+                <ha-icon class="chev" icon="mdi:chevron-right"></ha-icon>
+              </button>`
+            : nothing}
+          ${dayType
+            ? html`<button type="button" class="row" @click=${() => this.moreInfo(dayType.entity_id)}>
+                <ha-icon icon="mdi:calendar-week"></ha-icon>
+                <span class="name">${L("day_type")}</span>
+                <span class="state">
+                  ${L("day_types", {
+                    today: this.dayName(dayType.state as DayType),
+                    tomorrow: this.dayName(dayType.attributes.luna_tomorrow),
+                  })}${dayType.attributes.luna_from_entity === false ? html` <span class="muted">(${L("by_weekday")})</span>` : nothing}
+                </span>
+              </button>`
+            : nothing}
         </div>
       </section>
 
@@ -348,24 +384,28 @@ export class LunaZoneDialog extends LitElement {
       ${this.renderDevices(L("sensors_title"), (this.stateObj?.attributes.luna_temp_sensors as string[]) ?? [])}
       ${this.renderDevices(L("linked_title"), zone.linkedDevices)}
 
-      ${levels.length || flags.length
+      ${batteries.length
         ? html`<section class="group">
-            <h3>${L("batteries")}</h3>
+            <h3>
+              ${L("batteries")}
+              <span class="status ${lowCount ? "low" : "ok"}">
+                <ha-icon .icon=${lowCount ? "mdi:battery-alert-variant-outline" : "mdi:battery-check"}></ha-icon>
+                ${lowCount ? L("batteries_low", { count: lowCount }) : L("battery_ok")}
+              </span>
+            </h3>
             <div class="list">
-              ${levels.map(
-                (b) => html`<button type="button" class="row" @click=${() => this.moreInfo(b.entity_id)}>
-                  <ha-icon .icon=${b.level < 5 ? "mdi:battery-alert-variant-outline" : "mdi:battery"}></ha-icon>
+              ${batteries.map((b) => {
+                const text =
+                  b.low === null ? L("unavailable") : b.level !== undefined ? `${Math.round(b.level)}%` : b.low ? L("battery_low") : "OK";
+                return html`<button type="button" class="row" @click=${() => this.moreInfo(b.entity_id)}>
+                  <ha-icon
+                    class=${b.low ? "battery-low" : b.low === false ? "battery-ok" : ""}
+                    .icon=${b.low ? "mdi:battery-alert-variant-outline" : b.low === false ? "mdi:battery" : "mdi:battery-unknown"}
+                  ></ha-icon>
                   <span class="name">${b.device}</span>
-                  <span class="state ${b.level < 5 ? "warn" : ""}">${Math.round(b.level)}%</span>
-                </button>`,
-              )}
-              ${flags.map(
-                (b) => html`<button type="button" class="row" @click=${() => this.moreInfo(b.entity_id)}>
-                  <ha-icon .icon=${b.low ? "mdi:battery-alert-variant-outline" : "mdi:battery"}></ha-icon>
-                  <span class="name">${b.device}</span>
-                  <span class="state ${b.low ? "warn" : ""}">${b.low ? L("battery_low") : "OK"}</span>
-                </button>`,
-              )}
+                  <span class="state ${b.low ? "warn" : ""}">${text}</span>
+                </button>`;
+              })}
             </div>
           </section>`
         : nothing}
@@ -644,6 +684,9 @@ export class LunaZoneDialog extends LitElement {
     }
 
     .group h3 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin: 0 0 8px;
       font-size: 12px;
       font-weight: 600;
@@ -700,8 +743,37 @@ export class LunaZoneDialog extends LitElement {
       font-variant-numeric: tabular-nums;
     }
     .row .state.warn {
-      color: ${unsafe(LUNA.warning)};
+      color: ${unsafe(LUNA.batteryLow)};
       font-weight: 600;
+    }
+    .row > ha-icon.battery-ok {
+      color: ${unsafe(LUNA.batteryOk)};
+    }
+    .row > ha-icon.battery-low {
+      color: ${unsafe(LUNA.batteryLow)};
+    }
+    .row .state .muted {
+      opacity: 0.7;
+    }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      height: 22px;
+      padding: 0 8px 0 6px;
+      border-radius: 11px;
+      font-size: 11.5px;
+      letter-spacing: 0;
+      text-transform: none;
+      --mdc-icon-size: 14px;
+    }
+    .status.ok {
+      color: ${unsafe(LUNA.batteryOk)};
+      background: color-mix(in srgb, ${unsafe(LUNA.batteryOk)} 14%, transparent);
+    }
+    .status.low {
+      color: ${unsafe(LUNA.batteryLow)};
+      background: color-mix(in srgb, ${unsafe(LUNA.batteryLow)} 16%, transparent);
     }
     .row .chev {
       --mdc-icon-size: 18px;

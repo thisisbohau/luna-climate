@@ -1,4 +1,4 @@
-"""Tunable numbers: per-zone temperatures and control parameters."""
+"""Tunable numbers: per-zone control parameters and global temperatures."""
 
 from __future__ import annotations
 
@@ -16,13 +16,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import (
+    GLOBAL_AWAY_TEMP,
     GLOBAL_PRECOMFORT_TIMEOUT,
-    SET_AWAY_TEMP,
+    MAX_BLOCK_TEMP,
     SET_BOOST_OFFSET,
     SET_HYSTERESIS,
     SET_MIN_CYCLE,
-    SET_NIGHT_TEMP,
-    ZONE_MAX_TEMP,
     ZONE_MIN_TEMP,
 )
 from .engine import LunaEngine, ZoneConfig
@@ -37,30 +36,6 @@ class LunaNumberDescription(NumberEntityDescription):
 
 
 ZONE_NUMBERS: tuple[LunaNumberDescription, ...] = (
-    LunaNumberDescription(
-        key="away_temp",
-        translation_key="away_temp",
-        setting_key=SET_AWAY_TEMP,
-        icon="mdi:home-export-outline",
-        device_class=NumberDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        native_min_value=ZONE_MIN_TEMP,
-        native_max_value=ZONE_MAX_TEMP,
-        native_step=0.5,
-        mode=NumberMode.BOX,
-    ),
-    LunaNumberDescription(
-        key="night_temp",
-        translation_key="night_temp",
-        setting_key=SET_NIGHT_TEMP,
-        icon="mdi:weather-night",
-        device_class=NumberDeviceClass.TEMPERATURE,
-        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
-        native_min_value=ZONE_MIN_TEMP,
-        native_max_value=ZONE_MAX_TEMP,
-        native_step=0.5,
-        mode=NumberMode.BOX,
-    ),
     LunaNumberDescription(
         key="boost_offset",
         translation_key="boost_offset",
@@ -113,6 +88,7 @@ async def async_setup_entry(
         for description in ZONE_NUMBERS
     ]
     entities.append(LunaPrecomfortTimeout(engine))
+    entities.append(LunaAwayTemp(engine))
     async_add_entities(entities)
 
 
@@ -170,4 +146,35 @@ class LunaPrecomfortTimeout(LunaGlobalEntity, NumberEntity):
     async def async_set_native_value(self, value: float) -> None:
         """Store a new timeout."""
         self.store.set_global_setting(GLOBAL_PRECOMFORT_TIMEOUT, value)
+        await self.async_persist()
+
+
+class LunaAwayTemp(LunaGlobalEntity, NumberEntity):
+    """The temperature every zone that follows away drops to.
+
+    One value for the house. Away only ever lowers a zone's target, so a
+    block already below it keeps its own value and an off block stays off.
+    """
+
+    _attr_translation_key = "away_temp"
+    _attr_icon = "mdi:home-export-outline"
+    _attr_device_class = NumberDeviceClass.TEMPERATURE
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
+    _attr_native_min_value = ZONE_MIN_TEMP
+    _attr_native_max_value = MAX_BLOCK_TEMP
+    _attr_native_step = 0.5
+    _attr_mode = NumberMode.BOX
+
+    def __init__(self, engine: LunaEngine) -> None:
+        """Set up the away temperature."""
+        super().__init__(engine, GLOBAL_AWAY_TEMP)
+
+    @property
+    def native_value(self) -> float:
+        """Current away temperature."""
+        return float(self.store.global_setting(GLOBAL_AWAY_TEMP))
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Store a new away temperature and re-apply every zone."""
+        self.store.set_global_setting(GLOBAL_AWAY_TEMP, value)
         await self.async_persist()

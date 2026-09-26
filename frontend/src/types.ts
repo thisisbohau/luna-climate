@@ -75,11 +75,29 @@ export interface LovelaceCardConfig {
   [key: string]: unknown;
 }
 
+export type TargetValue = "off" | "max" | number;
+
+/** Which of a zone's two schedules a day runs. */
+export type DayType = "workday" | "free";
+
 /** A schedule block exactly as the integration's websocket returns it. */
 export interface ScheduleBlock {
-  weekdays: number[];
   start: string;
-  value: "off" | "max" | number;
+  value: TargetValue;
 }
 
-export type TargetValue = "off" | "max" | number;
+export type Schedules = Record<DayType, ScheduleBlock[]>;
+
+export interface DayTypes {
+  yesterday: DayType;
+  today: DayType;
+  tomorrow: DayType;
+  /** False when the Monday-to-Friday rule decided rather than a sensor. */
+  from_entity: boolean;
+}
+
+/** `luna_climate/schedule/get` and `/set`. */
+export interface ScheduleData {
+  schedules: Schedules;
+  day_types: DayTypes;
+}

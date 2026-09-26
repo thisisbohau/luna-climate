@@ -24,9 +24,10 @@ from homeassistant.helpers import entity_registry as er
 
 from .const import (
     ATTR_DURATION,
-    ATTR_SCHEDULE,
+    ATTR_FREE,
     ATTR_TEMPERATURE,
     ATTR_VALUE,
+    ATTR_WORKDAY,
     DOMAIN,
     SERVICE_BOOST,
     SERVICE_CANCEL_BOOST,
@@ -41,6 +42,7 @@ from .const import (
     ZONE_MIN_TEMP,
 )
 from .engine import LunaEngine
+from .schedule import ScheduleError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,8 +69,15 @@ COOL_FOR_SCHEMA = vol.Schema(
     }
 )
 
-SET_SCHEDULE_SCHEMA = vol.Schema(
-    {**TARGET_SCHEMA, vol.Required(ATTR_SCHEDULE): list}
+SET_SCHEDULE_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            **TARGET_SCHEMA,
+            vol.Optional(ATTR_WORKDAY): list,
+            vol.Optional(ATTR_FREE): list,
+        }
+    ),
+    cv.has_at_least_one_key(ATTR_WORKDAY, ATTR_FREE),
 )
 
 GET_SCHEDULE_SCHEMA = vol.Schema(TARGET_SCHEMA)
@@ -136,7 +145,7 @@ def async_register_services(hass: HomeAssistant) -> None:
         # here, the compressor logic is deliberately left to automations.
         _LOGGER.warning(
             "luna_climate.cool_for is not implemented yet; "
-            "drive the AC from an automation on the night mode entities"
+            "drive the AC from an automation"
         )
         raise ServiceValidationError(
             "cool_for is not implemented yet in this version"
@@ -163,8 +172,12 @@ def async_register_services(hass: HomeAssistant) -> None:
             await engine.async_resume_schedule(zone_id)
 
     async def _set_schedule(call: ServiceCall) -> None:
+        raw = {key: call.data[key] for key in (ATTR_WORKDAY, ATTR_FREE) if key in call.data}
         for engine, zone_id in _resolve_zones(hass, call.data[ATTR_ENTITY_ID]):
-            await engine.async_set_schedule(zone_id, call.data[ATTR_SCHEDULE])
+            try:
+                await engine.async_set_schedules(zone_id, raw)
+            except ScheduleError as err:
+                raise ServiceValidationError(str(err)) from err
 
     async def _get_schedule(call: ServiceCall) -> ServiceResponse:
         result: dict[str, Any] = {}
@@ -173,7 +186,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             _resolve_zones(hass, call.data[ATTR_ENTITY_ID]),
             strict=True,
         ):
-            result[entity_id] = engine.get_schedule(zone_id)
+            result[entity_id] = engine.get_schedules(zone_id)
         return {"schedules": result}
 
     hass.services.async_register(DOMAIN, SERVICE_BOOST, _boost, BOOST_SCHEMA)

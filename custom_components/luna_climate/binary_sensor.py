@@ -1,4 +1,5 @@
-"""The household's home/away state, as Luna sees it."""
+"""Binary sensors: the household's home/away state, and each zone's
+battery status."""
 
 from __future__ import annotations
 
@@ -8,11 +9,13 @@ from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .engine import LunaEngine
-from .entity import LunaGlobalEntity
+from .const import BATTERY_WARN_THRESHOLD
+from .engine import LunaEngine, ZoneConfig
+from .entity import LunaGlobalEntity, LunaZoneEntity
 
 
 async def async_setup_entry(
@@ -20,9 +23,11 @@ async def async_setup_entry(
     entry: Any,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the home/away sensor."""
+    """Set up the home/away sensor and the zone battery sensors."""
     engine: LunaEngine = entry.runtime_data.engine
-    async_add_entities([LunaHome(engine)])
+    entities: list[BinarySensorEntity] = [LunaHome(engine)]
+    entities.extend(LunaZoneBattery(engine, zone) for zone in engine.zones.values())
+    async_add_entities(entities)
 
 
 class LunaHome(LunaGlobalEntity, BinarySensorEntity):
@@ -53,4 +58,37 @@ class LunaHome(LunaGlobalEntity, BinarySensorEntity):
             "luna_presence_entities": list(self.engine.presence_entities),
             "luna_precomfort_active": self.engine.precomfort_active,
             "luna_precomfort_until": until.isoformat() if until else None,
+        }
+
+
+class LunaZoneBattery(LunaZoneEntity, BinarySensorEntity):
+    """On when any battery behind the zone is low.
+
+    Covers every device the zone uses *and* every device connected via
+    them -- with TadoLocal that is where the valves and wireless sensors
+    live -- so the zone gives one answer for all its hardware.
+    """
+
+    _attr_translation_key = "zone_battery"
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, engine: LunaEngine, zone: ZoneConfig) -> None:
+        """Set up the sensor."""
+        super().__init__(engine, zone, "battery")
+
+    @property
+    def is_on(self) -> bool:
+        """True when at least one battery is low."""
+        return self.engine.battery_low(self.zone.zone_id)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Every battery found, with its reading and verdict."""
+        batteries = self.engine.battery_status(self.zone.zone_id)
+        return {
+            "luna_batteries": batteries,
+            "luna_battery_count": len(batteries),
+            "luna_low_count": sum(1 for item in batteries if item["low"]),
+            "luna_warn_threshold": BATTERY_WARN_THRESHOLD,
         }

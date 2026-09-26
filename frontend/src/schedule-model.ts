@@ -1,15 +1,13 @@
 /**
- * Editing model for a weekly schedule.
+ * Editing model for a zone's two day schedules (workday and free day).
  *
- * Storage is a flat list of blocks, each with a set of weekdays. Editing
- * is per day, so the editor works on seven sorted lists of
- * `{ start, value }` and converts back on save: blocks with the same start
- * and value on several days become one stored block with those weekdays.
+ * Storage keeps "HH:MM" start times; the editor works on sorted lists of
+ * `{ start (minutes), value }` per day type and converts back on save.
  * Within a day starts are unique by construction, which is exactly the
  * rule the integration enforces.
  */
 
-import type { ScheduleBlock } from "./types";
+import type { DayType, ScheduleBlock, Schedules } from "./types";
 
 export type BlockValue = ScheduleBlock["value"];
 
@@ -19,7 +17,13 @@ export interface DayBlock {
   value: BlockValue;
 }
 
-export type Week = DayBlock[][];
+export type Plan = Record<DayType, DayBlock[]>;
+
+export const DAY_TYPES: DayType[] = ["workday", "free"];
+
+export function otherType(kind: DayType): DayType {
+  return kind === "workday" ? "free" : "workday";
+}
 
 export const STEP = 15;
 export const DAY = 1440;
@@ -42,54 +46,40 @@ export function snap(minutes: number, step = STEP): number {
   return Math.round(minutes / step) * step;
 }
 
-export function toWeek(schedule: ScheduleBlock[] | undefined): Week {
-  const week: Week = [[], [], [], [], [], [], []];
-  for (const block of schedule ?? []) {
+function toDay(blocks: ScheduleBlock[] | undefined): DayBlock[] {
+  const day: DayBlock[] = [];
+  for (const block of blocks ?? []) {
     const start = toMinutes(block.start);
-    for (const day of block.weekdays) {
-      if (day < 0 || day > 6) continue;
-      if (!week[day].some((b) => b.start === start)) {
-        week[day].push({ start, value: block.value });
-      }
-    }
+    if (!day.some((b) => b.start === start)) day.push({ start, value: block.value });
   }
-  for (const day of week) day.sort((a, b) => a.start - b.start);
-  return week;
+  return day.sort((a, b) => a.start - b.start);
 }
 
-function sameValue(a: BlockValue, b: BlockValue): boolean {
-  return typeof a === "number" && typeof b === "number" ? Math.abs(a - b) < 1e-9 : a === b;
+export function toPlan(schedules: Partial<Schedules> | undefined): Plan {
+  return { workday: toDay(schedules?.workday), free: toDay(schedules?.free) };
 }
 
-export function fromWeek(week: Week): ScheduleBlock[] {
-  const groups: Array<{ start: number; value: BlockValue; days: number[] }> = [];
-  week.forEach((blocks, day) => {
-    for (const b of blocks) {
-      const group = groups.find((g) => g.start === b.start && sameValue(g.value, b.value));
-      if (group) group.days.push(day);
-      else groups.push({ start: b.start, value: b.value, days: [day] });
-    }
-  });
-  groups.sort((a, b) => a.start - b.start || a.days[0] - b.days[0]);
-  return groups.map((g) => ({ weekdays: g.days.sort((a, b) => a - b), start: toClock(g.start), value: g.value }));
+export function fromPlan(plan: Plan): Schedules {
+  const out = (blocks: DayBlock[]) => blocks.map((b) => ({ start: toClock(b.start), value: b.value }));
+  return { workday: out(plan.workday), free: out(plan.free) };
 }
 
-export function cloneWeek(week: Week): Week {
-  return week.map((day) => day.map((b) => ({ ...b })));
+export function clonePlan(plan: Plan): Plan {
+  return { workday: plan.workday.map((b) => ({ ...b })), free: plan.free.map((b) => ({ ...b })) };
 }
 
-export function weeksEqual(a: Week, b: Week): boolean {
+export function plansEqual(a: Plan, b: Plan): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /**
- * What runs at 00:00 on `day` before its first block: the last block of the
- * most recent earlier day that has any (a week back at most, which may be
- * the same weekday a week ago).
+ * What most likely runs at 00:00 before a day's first block: the evening
+ * before usually has the same day type, so its last block; failing that,
+ * the other schedule's. (The real answer depends on what yesterday was.)
  */
-export function carryIn(week: Week, day: number): BlockValue | undefined {
-  for (let back = 1; back <= 7; back++) {
-    const blocks = week[(day - back + 7) % 7];
+export function carryIn(plan: Plan, kind: DayType): BlockValue | undefined {
+  for (const k of [kind, otherType(kind)]) {
+    const blocks = plan[k];
     if (blocks.length) return blocks[blocks.length - 1].value;
   }
   return undefined;

@@ -2,7 +2,7 @@
  * `custom:luna-boost-badge` — the badge preset for a Luna zone.
  *
  * One tap boosts the zone; another tap cancels. A ring around the icon
- * counts the boost down, and a dot flags a low battery in the zone.
+ * counts the boost down, and an orange dot flags a low battery in the zone.
  *
  *   type: custom:luna-boost-badge
  *   entity: climate.luna_bad
@@ -154,7 +154,8 @@ export class LunaBoostBadge extends LunaPillBase<BoostBadgeConfig> {
         content: `${localize(hass, "boost")} · ${Math.ceil(left / 60000)} ${localize(hass, "min")}`,
         color: LUNA.boost,
         progress: total > 0 ? left / total : 0,
-        indicator: battery?.warning,
+        indicator: battery?.low,
+        indicatorColor: LUNA.batteryLow,
         ariaLabel: localize(hass, "cancel_boost_aria", { zone: name }),
       };
     }
@@ -177,7 +178,8 @@ export class LunaBoostBadge extends LunaPillBase<BoostBadgeConfig> {
       name,
       content,
       color: zoneColor(zone),
-      indicator: battery?.warning,
+      indicator: battery?.low,
+        indicatorColor: LUNA.batteryLow,
       ariaLabel: localize(hass, "boost_badge_aria", { zone: name, min: minutes }),
     };
   }

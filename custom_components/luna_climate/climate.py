@@ -18,6 +18,7 @@ from homeassistant.components.climate import (
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from homeassistant.util import dt as dt_util
 
 from .const import (
     VALUE_OFF,
@@ -119,6 +120,9 @@ class LunaZoneClimate(LunaZoneEntity, ClimateEntity):
             "luna_temp_sensors": self.zone.temp_sensors,
             "luna_linked_devices": self.zone.linked_devices,
             "luna_away_enabled": self.zone.away_enabled,
+            "luna_day_type": self.engine.day_type(dt_util.now().date()),
+            "luna_battery_low": self.engine.battery_low(self.zone.zone_id),
+            "luna_battery_count": len(self.engine.battery_status(self.zone.zone_id)),
         }
         if resolved.block is not None:
             attrs["luna_block_start"] = resolved.block.start.isoformat()

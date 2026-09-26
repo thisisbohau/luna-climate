@@ -55,4 +55,6 @@ export const LUNA = {
   off: "var(--luna-off-color, var(--disabled-color, #9e9e9e))",
   max: "var(--luna-max-color, var(--red-color, #f44336))",
   warning: "var(--luna-warning-color, var(--error-color, #db4437))",
+  batteryOk: "var(--luna-battery-ok-color, var(--success-color, #43a047))",
+  batteryLow: "var(--luna-battery-low-color, var(--warning-color, #ffa600))",
 };

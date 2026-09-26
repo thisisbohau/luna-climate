@@ -14,9 +14,18 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import CONF_AWAY_ENABLED, CONF_PRESENCE_ENTITIES, CONF_ZONES, DOMAIN
+from .const import (
+    CONF_AWAY_ENABLED,
+    CONF_PRESENCE_ENTITIES,
+    CONF_WORKDAY_ENTITY,
+    CONF_WORKDAY_OFFSET,
+    CONF_ZONES,
+    DOMAIN,
+    WORKDAY_TOMORROW,
+)
 from .engine import LunaEngine
 from .frontend_assets import async_register_frontend
 from .services import async_register_services
@@ -34,9 +43,20 @@ PLATFORMS: list[Platform] = [
     Platform.NUMBER,
     Platform.SELECT,
     Platform.SENSOR,
-    Platform.SWITCH,
-    Platform.TIME,
 ]
+
+#: Unique-id suffixes of entities earlier versions created and this one no
+#: longer does: night mode (switch, temperature, average, window), the
+#: per-zone away temperature (now global) and the lowest-battery sensor
+#: (now a zone battery status).
+REMOVED_ENTITY_SUFFIXES = (
+    "_night_mode",
+    "_night_temp",
+    "_night_avg_temp",
+    "_away_temp",
+    "_battery_min",
+)
+REMOVED_GLOBAL_UNIQUE_IDS = ("luna_global_night_start", "luna_global_night_end")
 
 
 @dataclass
@@ -73,7 +93,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool
     entry.runtime_data = LunaRuntime(store=store, engine=engine)
 
     zones = list(entry.options.get(CONF_ZONES, []))
-    await engine.async_start(zones, list(entry.options.get(CONF_PRESENCE_ENTITIES, [])))
+    await engine.async_start(
+        zones,
+        list(entry.options.get(CONF_PRESENCE_ENTITIES, [])),
+        entry.options.get(CONF_WORKDAY_ENTITY),
+        entry.options.get(CONF_WORKDAY_OFFSET, WORKDAY_TOMORROW),
+    )
 
     # Forget runtime state for zones the user has deleted.
     configured = {zone["zone_id"] for zone in zones}
@@ -83,6 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool
     await store.async_save()
 
     _remove_stale_devices(hass, entry, configured)
+    _remove_retired_entities(hass, entry)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -91,12 +117,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bool:
-    """Move per-zone presence trackers to the single household list.
+    """Upgrade the config entry options.
 
-    1.1 kept presence entities on each zone. 1.2 has one list for the house
-    and a per-zone "follows away" switch. A zone that had trackers keeps
+    1.1 -> 1.2: per-zone presence trackers move to one household list with
+    a per-zone "follows away" switch. A zone that had trackers keeps
     following away; a zone that had none keeps ignoring it, so behaviour
     does not change underneath anyone.
+
+    1.2 -> 1.3: the workday source is added, unset.
     """
     if entry.version > 1:
         return False
@@ -116,6 +144,13 @@ async def async_migrate_entry(hass: HomeAssistant, entry: LunaConfigEntry) -> bo
         options[CONF_PRESENCE_ENTITIES] = presence
         hass.config_entries.async_update_entry(entry, options=options, minor_version=2)
         _LOGGER.info("Migrated Luna Climate presence to a single household list")
+    if entry.version == 1 and entry.minor_version < 3:
+        # 1.3 adds the workday source. No entity yet means Monday to Friday
+        # count as workdays until one is picked.
+        options = dict(entry.options)
+        options.setdefault(CONF_WORKDAY_ENTITY, None)
+        options.setdefault(CONF_WORKDAY_OFFSET, WORKDAY_TOMORROW)
+        hass.config_entries.async_update_entry(entry, options=options, minor_version=3)
     return True
 
 
@@ -144,6 +179,22 @@ def _remove_stale_devices(
             registry.async_update_device(
                 device.id, remove_config_entry_id=entry.entry_id
             )
+
+
+def _remove_retired_entities(hass: HomeAssistant, entry: LunaConfigEntry) -> None:
+    """Remove registry entries of entities this version no longer provides.
+
+    Otherwise they would linger as "no longer provided" in the UI.
+    """
+    registry = er.async_get(hass)
+    for item in er.async_entries_for_config_entry(registry, entry.entry_id):
+        unique_id = item.unique_id or ""
+        if unique_id in REMOVED_GLOBAL_UNIQUE_IDS or (
+            unique_id.startswith("luna_")
+            and not unique_id.startswith("luna_global_")
+            and unique_id.endswith(REMOVED_ENTITY_SUFFIXES)
+        ):
+            registry.async_remove(item.entity_id)
 
 
 async def async_remove_config_entry_device(

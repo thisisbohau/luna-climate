@@ -77,7 +77,8 @@ const TICKS = (() => {
 })();
 const TRACK = arc(G.T0, G.T1);
 const BOOST = unsafeCSS(LUNA.boost);
-const WARNING = unsafeCSS(LUNA.warning);
+const BATTERY_OK = unsafeCSS(LUNA.batteryOk);
+const BATTERY_LOW = unsafeCSS(LUNA.batteryLow);
 
 const position = (v: TargetValue) => (v === "off" ? G.T0 : v === "max" ? G.T1 : Math.min(G.T1, Math.max(G.T0, v)));
 
@@ -401,11 +402,15 @@ export class LunaZoneCard extends LitElement {
               <span class="sub">${zone.available ? subtitle : L("unavailable")}</span>
             </span>
           </button>
-          ${battery?.warning
-            ? html`<span class="chip warn" title=${L("battery")}>
-                <ha-icon icon="mdi:battery-alert-variant-outline"></ha-icon>
-                <span>${battery.lowest !== undefined ? `${Math.round(battery.lowest)}%` : L("battery_low")}</span>
-              </span>`
+          ${battery
+            ? battery.low
+              ? html`<span class="chip battery-low" title=${`${L("battery")}: ${L("battery_low")}`}>
+                  <ha-icon icon="mdi:battery-alert-variant-outline"></ha-icon>
+                  <span>${L("battery_low")}</span>
+                </span>`
+              : html`<span class="chip battery-ok icon-only" title=${`${L("battery")}: ${L("battery_ok")}`}>
+                  <ha-icon icon="mdi:battery-check"></ha-icon>
+                </span>`
             : nothing}
           <span class="chip" title=${L(chip.label)}>
             <ha-icon .icon=${chip.icon}></ha-icon>
@@ -610,11 +615,20 @@ export class LunaZoneCard extends LitElement {
     .chip ha-icon {
       color: var(--zone-color);
     }
-    .chip.warn {
-      background: color-mix(in srgb, ${WARNING} 14%, transparent);
-      color: ${WARNING};
+    .chip.battery-low {
+      background: color-mix(in srgb, ${BATTERY_LOW} 16%, transparent);
+      color: ${BATTERY_LOW};
     }
-    .chip.warn ha-icon {
+    .chip.battery-ok {
+      color: ${BATTERY_OK};
+    }
+    .chip.icon-only {
+      padding: 0;
+      width: 28px;
+      justify-content: center;
+    }
+    .chip.battery-low ha-icon,
+    .chip.battery-ok ha-icon {
       color: inherit;
     }
 

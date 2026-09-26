@@ -1,7 +1,7 @@
 # Luna Climate
 
 A Home Assistant custom integration for zone-based heating control. It owns
-its own weekly schedule, so it does not depend on any scheduling still
+its own schedules, so it does not depend on any scheduling still
 sitting inside the devices themselves — which matters when the vendor cloud
 is blocked and those schedules can no longer be edited.
 
@@ -10,7 +10,7 @@ integrations: domain `luna_climate`, services `luna_climate.*`, entity
 attributes `luna_*`, websocket commands `luna_climate/*`.
 
 **Status:** heating is complete. The air conditioning half is deliberately
-not implemented; see [Night mode](#night-mode).
+not implemented; `luna_climate.cool_for` is registered but raises.
 
 ## Installation
 
@@ -60,27 +60,30 @@ humidity, and the cards leave it out.
 
 ## Schedule
 
-One schedule per zone, stored by the integration rather than on the devices.
+Each zone has two day schedules, stored by the integration rather than on
+the devices: one for **workdays** and one for **free days** (weekends and
+holidays). Which one a day runs is decided for the whole house, see
+[Workdays](#workdays).
 
 A block carries a start time only and runs until the next block begins,
-wrapping past midnight into the following day. Gaps and overlaps are
-therefore structurally impossible, which is the main reason for this shape.
+wrapping past midnight. Gaps and overlaps are therefore structurally
+impossible, which is the main reason for this shape. Before a day's first
+block, the previous day's last block is still running, whichever schedule
+that day used.
 
 ```yaml
 action: luna_climate.set_schedule
 target:
   entity_id: climate.luna_wohnzimmer
 data:
-  schedule:
-    - weekdays: [0, 1, 2, 3, 4]      # 0 = Monday
-      start: "06:00"
-      value: 21.0
-    - weekdays: [0, 1, 2, 3, 4]
-      start: "08:30"
-      value: "off"
-    - weekdays: [5, 6]
-      start: "08:00"
-      value: "max"
+  workday:
+    - {start: "05:30", value: 21}
+    - {start: "08:00", value: "off"}
+    - {start: "17:00", value: 21.5}
+    - {start: "22:30", value: 18}
+  free:                              # optional; leave out to keep it as is
+    - {start: "08:00", value: 21}
+    - {start: "23:00", value: 18}
 ```
 
 `value` is one of:
@@ -105,6 +108,29 @@ Highest priority first:
 
 The active source is visible on the climate entity as `luna_source`.
 
+### Workdays
+
+Under **Configure → Workdays**, pick a `binary_sensor` or `input_boolean`
+that is on for a workday. The [Workday](https://www.home-assistant.io/integrations/workday/)
+integration is the usual choice, and it knows public holidays.
+
+Also say which day it describes:
+
+- **The next day** (the default; Workday with `days_offset: 1`). On
+  Friday evening such a sensor already says "Saturday is free", yet Friday
+  itself must keep running the workday schedule until midnight. So Luna
+  records what the sensor said on each day, and today's schedule is what it
+  said *yesterday*. The record is stored, so a restart does not lose it.
+- **The current day** (Workday with `days_offset: 0`). The schedule
+  follows the sensor directly.
+
+Without a sensor, or before the first reading has been recorded, Monday to
+Friday count as workdays.
+
+`sensor.luna_climate_day_type` shows today's type (`workday` / `free`),
+with tomorrow's in `luna_tomorrow` and whether the sensor decided it in
+`luna_from_entity`. Each zone's climate entity carries `luna_day_type` too.
+
 ### Away
 
 Home/away is one household-wide state. The presence entities are picked
@@ -119,12 +145,17 @@ because otherwise a restart would cool the house down.
 
 Each zone decides whether it follows away mode with the **Follows home/away**
 option under **Configure → Edit zone**. It is on by default. A bathroom that should stay on
-schedule regardless can turn it off. The away setpoint remains per zone
-(`number.luna_<zone>_away_temperature`).
+schedule regardless can turn it off. The away temperature is one value for
+the house: `number.luna_climate_away_temperature`.
 
 > Upgrading from 0.3: presence entities used to be picked per zone. They are
 > merged into the global list automatically, and zones that had none are set
 > not to follow away mode, so nothing changes behaviour.
+
+> Upgrading from 0.4, which is automatic:
+> - each weekday schedule is split in two: the workday schedule comes from Monday (or the first weekday with blocks), the free-day schedule from Saturday (or Sunday)
+> - the per-zone away temperatures become one global value, the most common of them
+> - night mode, the night temperature, the night window and the lowest-battery sensor are removed along with their entities
 
 ### Precomfort
 
@@ -175,53 +206,51 @@ Sensor placement matters more than any of these numbers. In a bathroom
 heated only by a towel warmer, a sensor mounted near the warmer will satisfy
 early and leave the room cold.
 
-## Night mode
-
-Four inert entities per zone, stored and exposed but never acted on. They
-exist so the AC logic can live in your own automations:
-
-- `switch.luna_<zone>_night_mode`
-- `number.luna_<zone>_night_temp`
-- `time.luna_climate_night_start` / `time.luna_climate_night_end` (global)
-- `sensor.luna_<zone>_night_average_temperature` — the *measured* mean
-  across the night window, to tune that logic against
-
-`luna_climate.cool_for` is registered but raises; the timer and zone
-plumbing are in place, the compressor logic is not.
-
 ## Entities per zone
 
 | Entity | Purpose |
 |---|---|
 | `climate.luna_<zone>` | The zone. Setting a temperature switches it to manual and ends any boost; `off` holds it off; `heat` resumes the schedule |
 | `select.luna_<zone>_mode` | Schedule or manual |
-| `number.luna_<zone>_away_temperature` | Away setpoint |
 | `number.luna_<zone>_boost_offset` | Added to the current target by `boost` |
 | `number.luna_<zone>_hysteresis` | Linked-device deadband |
 | `number.luna_<zone>_minimum_cycle_time` | Linked-device minimum cycle |
 | `sensor.luna_<zone>_scheduled_temperature` | The block value alone, with `luna_block_start` / `luna_block_end` |
 | `sensor.luna_<zone>_boost_ends_at` | Timestamp, empty when idle |
-| `sensor.luna_<zone>_lowest_battery` | See below |
+| `binary_sensor.luna_<zone>_battery` | On when any battery behind the zone is low; see below |
 | `button.luna_<zone>_schedule_details` | On the zone's device page: opens the detail view and schedule editor in your browser |
 
-Plus one entity for the whole house: `binary_sensor.luna_climate_home`.
+For the whole house:
+
+| Entity | Purpose |
+|---|---|
+| `binary_sensor.luna_climate_home` | On while anyone is home |
+| `number.luna_climate_away_temperature` | What zones that follow away drop to |
+| `sensor.luna_climate_day_type` | `workday` or `free` today |
+| `number.luna_climate_precomfort_timeout` | How long precomfort waits for someone to arrive |
 
 ### Battery reporting
 
-`lowest_battery` walks from every entity configured in the zone to its
-device, then collects that device's battery entities. Two shapes turn up in
-practice and they are kept separate rather than forced into one number:
+A zone's batteries rarely sit on the entities you configure. With
+TadoLocal, a Tado zone's climate entity belongs to a *zone* device, and the
+valves and wireless sensors in that zone are separate devices connected
+via it. So Luna starts at the device of every entity configured in the zone
+and walks down to every device registered via it, however deep, collecting
+all battery entities on the way:
 
-- `luna_batteries` — percentage readings (Aqara, Homematic and similar)
-- `luna_battery_flags` — plain "battery low" flags
+- a percentage (Aqara, Homematic and similar) is low below 5 %
+- a flag (`binary_sensor` with device class battery, which is what Tado
+  reports) is low when it is on
 
-Tado devices behind TadoLocal only ever report the flag, and only while the
-cloud metadata sync is reachable. With the bridge blocked from the internet
-that flag is stale or absent, so treat those valves' own low-battery display
-as the real signal.
+`binary_sensor.luna_<zone>_battery` is on as soon as any of them is low.
+Its `luna_batteries` attribute lists every battery with its device name,
+reading and verdict. The cards show a green battery icon when all is well
+and an orange one when anything is low. Devices that finish loading after
+Luna are picked up within a minute.
 
-`luna_battery_warning` is true when any percentage is below 5 % or any flag
-is set. It is an attribute for the frontend to render, not a notification.
+Tado's flag comes from the cloud metadata sync. With the bridge blocked from
+the internet it may be stale or absent, so treat the valves' own low-battery
+display as the final word.
 
 ## Dashboard cards
 
@@ -236,17 +265,19 @@ services → Luna Climate → *zone* → Schedule & details**, and from any
 `more-info` action on a Luna zone (such as holding the boost badge).
 
 - **Overview** shows current and target temperature, humidity, the active
-  source, boost buttons, home/away, every thermostat, sensor and linked
-  device with its state, batteries and the zone's settings. Tap any row to
-  open Home Assistant's own dialog for that entity.
-- **Schedule** edits the week one day at a time:
+  source, boost buttons, home/away with the away temperature and today's
+  day type, every thermostat, sensor and linked device with its state, the
+  batteries with an overall status, and the zone's settings. Tap any row
+  to open Home Assistant's own dialog for that entity.
+- **Schedule** edits the two day schedules, opening on the one that runs
+  today:
   - drag a handle to move a start time (15-minute steps; arrow keys work too)
   - tap a block to set Off, a temperature from 18 to 25 °, or Max, or to type
     exact times
   - **Add block** splits the selected block, **Remove** deletes it
-  - **Copy day** copies the day onto other weekdays
-  - the hatched section at the start of a day is the previous day's last
-    block carrying over midnight
+  - **Copy to …** replaces the other schedule with this one
+  - the hatched section at the start of the day is the evening before
+    carrying over midnight
 
   Nothing is written until **Save**, and closing with unsaved changes asks
   first.
@@ -307,7 +338,7 @@ hold_action:          # optional, default: opens the detail view
 ```
 
 Tap boosts, tap again cancels. A ring around the icon counts the boost down,
-and a red dot means a low battery somewhere in the zone.
+and an orange dot means a low battery somewhere in the zone.
 
 ### `custom:luna-badge-card`
 
@@ -359,8 +390,8 @@ npm run build      # typecheck, then bundle into custom_components/luna_climate/
 | `luna_climate.clear_precomfort` | End the precomfort period now |
 | `luna_climate.set_target` | Hold a zone at `off`, `max` or a temperature; ends any boost |
 | `luna_climate.resume_schedule` | Hand a zone back to its schedule |
-| `luna_climate.set_schedule` | Replace a zone's weekly schedule |
-| `luna_climate.get_schedule` | Return a zone's schedule (response service) |
+| `luna_climate.set_schedule` | Replace a zone's workday and/or free-day schedule |
+| `luna_climate.get_schedule` | Return a zone's two schedules (response service) |
 | `luna_climate.cool_for` | Reserved for AC; not implemented |
 
 ## Websocket API
@@ -368,8 +399,8 @@ npm run build      # typecheck, then bundle into custom_components/luna_climate/
 Used by the cards, and available to anything else:
 
 - `luna_climate/zones` — every zone with state, schedule, settings and device lists
-- `luna_climate/schedule/get` — `{zone_id}`
-- `luna_climate/schedule/set` — `{zone_id, schedule}`
+- `luna_climate/schedule/get` — `{zone_id}` → `{schedules: {workday, free}, day_types: {yesterday, today, tomorrow, from_entity}}`
+- `luna_climate/schedule/set` — `{zone_id, schedules: {workday?, free?}}`, same result
 - `luna_climate/subscribe_ui` — events asking this user's browser to open a
   zone's detail view (sent by the device-page button)
 

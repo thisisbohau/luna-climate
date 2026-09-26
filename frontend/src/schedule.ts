@@ -1,5 +1,5 @@
 /**
- * Client-side view of a zone's weekly schedule.
+ * Client-side view of a zone's schedule for today.
  *
  * Mirrors the integration's model: blocks store a start time only and run
  * until the next block begins, wrapping past midnight. "Now" is taken in
@@ -7,7 +7,7 @@
  * another zone still shows the house's day.
  */
 
-import type { ScheduleBlock } from "./types";
+import type { DayType, ScheduleData, TargetValue } from "./types";
 
 export interface ZonedNow {
   /** Python convention: Monday = 0 ... Sunday = 6. */
@@ -53,9 +53,8 @@ function toMinutes(start: string): number {
   return (h || 0) * 60 + (m || 0);
 }
 
-function blocksOn(blocks: ScheduleBlock[], weekday: number) {
-  return blocks
-    .filter((b) => b.weekdays.includes(weekday))
+function blocksOf(data: ScheduleData, kind: DayType) {
+  return (data.schedules[kind] ?? [])
     .map((b) => ({ start: toMinutes(b.start), value: b.value }))
     .sort((a, b) => a.start - b.start);
 }
@@ -63,52 +62,54 @@ function blocksOn(blocks: ScheduleBlock[], weekday: number) {
 export interface Segment {
   start: number;
   end: number;
-  value: ScheduleBlock["value"];
+  value: TargetValue;
   current: boolean;
 }
 
 export interface DayView {
   segments: Segment[];
-  current?: ScheduleBlock["value"];
+  current?: TargetValue;
   /** Next change: minutes from today's midnight (may exceed 1440). */
   nextAt?: number;
-  nextValue?: ScheduleBlock["value"];
+  nextValue?: TargetValue;
   /** Days until the next change: 0 = today, 1 = tomorrow, ... */
   nextDayOffset?: number;
+  /** Which schedule today runs. */
+  dayType?: DayType;
 }
 
-/** Today's blocks as drawable segments, plus what is next. */
-export function dayView(blocks: ScheduleBlock[], now: ZonedNow): DayView {
-  if (!blocks.length) return { segments: [] };
+/**
+ * Today's blocks as drawable segments, plus what is next.
+ *
+ * Today's blocks come from today's day type. Before the first one, the
+ * last block of yesterday's schedule is still running; the next change
+ * after today's last block is tomorrow's first block. Beyond tomorrow the
+ * day types are not known, so today's type stands in.
+ */
+export function dayView(data: ScheduleData | undefined, now: ZonedNow): DayView {
+  if (!data) return { segments: [] };
+  const types = data.day_types;
+  const today = blocksOf(data, types.today);
+  const view: DayView = { segments: [], dayType: types.today };
 
-  // What was in force at midnight: the last block of the most recent
-  // earlier day that has any.
-  let carry: ScheduleBlock["value"] | undefined;
-  for (let back = 1; back <= 7 && carry === undefined; back++) {
-    const day = blocksOn(blocks, (now.weekday - back + 7) % 7);
-    if (day.length) carry = day[day.length - 1].value;
+  let carry: TargetValue | undefined;
+  for (const kind of [types.yesterday, types.today, types.tomorrow]) {
+    const blocks = blocksOf(data, kind);
+    if (blocks.length) {
+      carry = blocks[blocks.length - 1].value;
+      break;
+    }
   }
+  if (carry === undefined) return view;
 
-  const today = blocksOn(blocks, now.weekday);
   const starts = [...today];
-  if ((!starts.length || starts[0].start > 0) && carry !== undefined) {
-    starts.unshift({ start: 0, value: carry });
-  }
+  if (!starts.length || starts[0].start > 0) starts.unshift({ start: 0, value: carry });
 
-  const segments: Segment[] = starts.map((b, i) => {
+  view.segments = starts.map((b, i) => {
     const end = i + 1 < starts.length ? starts[i + 1].start : 1440;
-    return {
-      start: b.start,
-      end,
-      value: b.value,
-      current: now.minutes >= b.start && now.minutes < end,
-    };
+    return { start: b.start, end, value: b.value, current: now.minutes >= b.start && now.minutes < end };
   });
-
-  const view: DayView = {
-    segments,
-    current: segments.find((s) => s.current)?.value,
-  };
+  view.current = view.segments.find((s) => s.current)?.value;
 
   const laterToday = today.find((b) => b.start > now.minutes);
   if (laterToday) {
@@ -118,7 +119,7 @@ export function dayView(blocks: ScheduleBlock[], now: ZonedNow): DayView {
     return view;
   }
   for (let ahead = 1; ahead <= 7; ahead++) {
-    const day = blocksOn(blocks, (now.weekday + ahead) % 7);
+    const day = blocksOf(data, ahead === 1 ? types.tomorrow : types.today);
     if (day.length) {
       view.nextAt = ahead * 1440 + day[0].start;
       view.nextValue = day[0].value;

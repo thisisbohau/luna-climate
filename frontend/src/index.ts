@@ -11,7 +11,7 @@ import { LunaScheduleEditor } from "./schedule-editor";
 import { LunaZoneDialog, openZoneDialog } from "./zone-dialog";
 import type { HomeAssistant } from "./types";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 function define(name: string, ctor: CustomElementConstructor): void {
   if (!customElements.get(name)) customElements.define(name, ctor);

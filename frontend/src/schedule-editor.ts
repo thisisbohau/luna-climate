@@ -1,15 +1,17 @@
 /**
- * `luna-schedule-editor` — edits a zone's week, one day at a time.
+ * `luna-schedule-editor` — edits a zone's two day schedules.
  *
- * - Day chips pick the day; a dot marks days with their own blocks.
+ * - Two tabs: the workday schedule and the free-day schedule (weekends and
+ *   holidays). The workday sensor decides which one a day runs; the tab
+ *   running today is marked.
  * - The bar shows that day's blocks. Tap a block to select it; drag the
  *   handle at a block's start to move it (15-minute steps, never past a
  *   neighbour). Handles also move with the arrow keys.
  * - The hatched stretch before the first block is what carries over from
- *   the previous day. Tapping it offers a block at 00:00.
+ *   the evening before. Tapping it offers a block at 00:00.
  * - The panel under the bar sets the selected block's value (off, a
  *   temperature, or max) and exact times, and splits or removes it.
- * - "Copy day" repeats the current day onto others.
+ * - "Copy to …" replaces the other schedule with this one.
  *
  * Nothing is sent until Save, which fires `schedule-save` with the stored
  * format. `schedule-cancel` asks the host to drop the edits.
@@ -26,23 +28,26 @@ import {
   MIN_TEMP,
   STEP,
   blockEnd,
+  DAY_TYPES,
   carryIn,
   clampTemp,
-  cloneWeek,
-  fromWeek,
+  clonePlan,
+  fromPlan,
   insertAt,
+  otherType,
   moveStart,
   removeBlock,
   splitBlock,
   startBounds,
   toClock,
   toMinutes,
-  toWeek,
-  weeksEqual,
+  toPlan,
+  plansEqual,
   type BlockValue,
-  type Week,
+  type DayBlock,
+  type Plan,
 } from "./schedule-model";
-import type { HomeAssistant, ScheduleBlock } from "./types";
+import type { DayType, HomeAssistant, ScheduleData } from "./types";
 import { formatTemp } from "./zone";
 
 type Selection = number | "carry" | undefined;
@@ -64,16 +69,16 @@ function valueInk(value: BlockValue): string {
 
 export class LunaScheduleEditor extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistant;
-  @property({ attribute: false }) schedule?: ScheduleBlock[];
+  @property({ attribute: false }) data?: ScheduleData;
   @property({ type: Boolean }) busy = false;
   @property({ attribute: false }) error?: string;
 
-  @state() private week: Week = [[], [], [], [], [], [], []];
-  @state() private original: Week = [[], [], [], [], [], [], []];
-  @state() private day = (new Date().getDay() + 6) % 7;
+  @state() private plan: Plan = { workday: [], free: [] };
+  @state() private original: Plan = { workday: [], free: [] };
+  @state() private kind: DayType = "workday";
   @state() private selected: Selection;
   @state() private copying = false;
-  @state() private copyTargets = new Set<number>();
+  private kindChosen = false;
   @state() private dragging?: number;
   /** Bar width in px, so labels only show where they fit. */
   @state() private barWidth = 600;
@@ -100,31 +105,36 @@ export class LunaScheduleEditor extends LitElement {
 
   /** True while there are unsaved edits. */
   get dirty(): boolean {
-    return !weeksEqual(this.week, this.original);
+    return !plansEqual(this.plan, this.original);
   }
 
   /** Throw away edits and show the stored schedule again. */
   reset(): void {
-    this.week = cloneWeek(this.original);
+    this.plan = clonePlan(this.original);
     this.selected = undefined;
     this.copying = false;
   }
 
   protected willUpdate(changed: PropertyValues): void {
     super.willUpdate(changed);
-    if (changed.has("schedule") && this.schedule) {
-      const incoming = toWeek(this.schedule);
+    if (changed.has("data") && this.data) {
+      const incoming = toPlan(this.data.schedules);
       // Adopt a new stored schedule, but never under the user's edits.
-      if (!this.dirty || weeksEqual(incoming, this.week)) {
+      if (!this.dirty || plansEqual(incoming, this.plan)) {
         this.original = incoming;
-        this.week = cloneWeek(incoming);
+        this.plan = clonePlan(incoming);
         if (typeof this.selected === "number" && this.selected >= this.blocks.length) this.selected = undefined;
+      }
+      // Open on the schedule running today, once.
+      if (!this.kindChosen) {
+        this.kind = this.data.day_types.today;
+        this.kindChosen = true;
       }
     }
   }
 
-  private get blocks() {
-    return this.week[this.day];
+  private get blocks(): DayBlock[] {
+    return this.plan[this.kind];
   }
 
   private L(key: StringKey, vars?: Record<string, string | number>) {
@@ -135,16 +145,12 @@ export class LunaScheduleEditor extends LitElement {
     return formatTemp(value, this.hass);
   }
 
-  private dayName(day: number, style: "short" | "long" = "short"): string {
-    // 2024-01-01 was a Monday, so day 0 lines up with Python's Monday = 0.
-    const date = new Date(Date.UTC(2024, 0, 1 + day));
-    return date.toLocaleDateString(this.hass?.locale?.language ?? "en", { weekday: style, timeZone: "UTC" });
+  private typeName(kind: DayType): string {
+    return this.L(kind === "workday" ? "workday" : "free_day");
   }
 
-  private setDay(blocks: typeof this.week[number]): void {
-    const week = cloneWeek(this.week);
-    week[this.day] = blocks;
-    this.week = week;
+  private setDay(blocks: DayBlock[]): void {
+    this.plan = { ...clonePlan(this.plan), [this.kind]: blocks };
   }
 
   // -- block edits -------------------------------------------------------
@@ -189,7 +195,7 @@ export class LunaScheduleEditor extends LitElement {
   }
 
   private addAtMidnight(): void {
-    const value = carryIn(this.week, this.day) ?? this.lastTemp;
+    const value = carryIn(this.plan, this.kind) ?? this.lastTemp;
     const result = insertAt(this.blocks, 0, value);
     if (!result) return;
     this.setDay(result.blocks);
@@ -267,23 +273,17 @@ export class LunaScheduleEditor extends LitElement {
 
   // -- copy ----------------------------------------------------------------
 
-  private toggleCopyTarget(day: number): void {
-    const next = new Set(this.copyTargets);
-    if (next.has(day)) next.delete(day);
-    else next.add(day);
-    this.copyTargets = next;
-  }
-
   private applyCopy(): void {
-    const week = cloneWeek(this.week);
-    for (const day of this.copyTargets) week[day] = this.blocks.map((b) => ({ ...b }));
-    this.week = week;
+    const other = otherType(this.kind);
+    this.plan = { ...clonePlan(this.plan), [other]: this.blocks.map((b) => ({ ...b })) };
     this.copying = false;
-    this.copyTargets = new Set();
+    this.kind = other;
+    this.selected = undefined;
+    haptic("success");
   }
 
   private save(): void {
-    fireEvent(this, "schedule-save", { schedule: fromWeek(this.week) });
+    fireEvent(this, "schedule-save", { schedules: fromPlan(this.plan) });
   }
 
   private cancel(): void {
@@ -295,26 +295,32 @@ export class LunaScheduleEditor extends LitElement {
 
   protected render() {
     const blocks = this.blocks;
-    const carry = carryIn(this.week, this.day);
+    const carry = carryIn(this.plan, this.kind);
+    const today = this.data?.day_types.today;
     const firstStart = blocks.length ? blocks[0].start : DAY;
     const pct = (m: number) => `${(m / DAY) * 100}%`;
     const px = (m: number) => (m / DAY) * this.barWidth;
 
     return html`
-      <div class="days" role="tablist" aria-label=${this.L("days")}>
-        ${[0, 1, 2, 3, 4, 5, 6].map(
-          (d) => html`<button
+      <div class="kinds" role="tablist" aria-label=${this.L("schedule")}>
+        ${DAY_TYPES.map(
+          (k) => html`<button
             type="button"
             role="tab"
-            class="day ${d === this.day ? "active" : ""}"
-            aria-selected=${d === this.day ? "true" : "false"}
+            class="kind ${k === this.kind ? "active" : ""}"
+            aria-selected=${k === this.kind ? "true" : "false"}
             @click=${() => {
-              this.day = d;
+              this.kind = k;
               this.selected = undefined;
               this.copying = false;
             }}
           >
-            ${this.dayName(d)}${this.week[d].length ? html`<span class="has"></span>` : nothing}
+            <ha-icon .icon=${k === "workday" ? "mdi:briefcase-outline" : "mdi:beach"}></ha-icon>
+            <span class="kind-text">
+              <span class="kind-name">${this.typeName(k)}</span>
+              <span class="kind-sub">${this.L(k === "workday" ? "workday_sub" : "free_sub")}</span>
+            </span>
+            ${k === today ? html`<span class="today">${this.L("today")}</span>` : nothing}
           </button>`,
         )}
       </div>
@@ -385,7 +391,7 @@ export class LunaScheduleEditor extends LitElement {
             this.selected = undefined;
           }}
         >
-          <ha-icon icon="mdi:content-copy"></ha-icon>${this.L("copy_day")}
+          <ha-icon icon="mdi:content-copy"></ha-icon>${this.L("copy_to_type", { type: this.typeName(otherType(this.kind)) })}
         </button>
       </div>
 
@@ -405,38 +411,22 @@ export class LunaScheduleEditor extends LitElement {
   }
 
   private renderCopy() {
+    const other = this.typeName(otherType(this.kind));
     return html`<div class="panel">
-      <div class="panel-title">${this.L("copy_to", { day: this.dayName(this.day, "long") })}</div>
-      <div class="targets">
-        ${[0, 1, 2, 3, 4, 5, 6]
-          .filter((d) => d !== this.day)
-          .map(
-            (d) => html`<button
-              type="button"
-              class="day small ${this.copyTargets.has(d) ? "active" : ""}"
-              aria-pressed=${this.copyTargets.has(d) ? "true" : "false"}
-              @click=${() => this.toggleCopyTarget(d)}
-            >
-              ${this.dayName(d)}
-            </button>`,
-          )}
-      </div>
+      <div class="hint">${this.L("copy_confirm", { from: this.typeName(this.kind), to: other })}</div>
       <div class="row end">
         <button type="button" class="ghost" @click=${() => (this.copying = false)}>${this.L("cancel")}</button>
-        <button type="button" class="primary" ?disabled=${!this.copyTargets.size} @click=${this.applyCopy}>
-          ${this.L("apply")}
-        </button>
+        <button type="button" class="primary" @click=${this.applyCopy}>${this.L("copy")}</button>
       </div>
     </div>`;
   }
 
   private renderPanel(carry: BlockValue | undefined) {
     if (this.selected === "carry") {
-      const from = this.dayName((this.day + 6) % 7, "long");
       return html`<div class="panel">
         <div class="hint">
           ${carry !== undefined
-            ? this.L("carry_hint", { day: from, value: this.fmt(carry) })
+            ? this.L("carry_hint", { value: this.fmt(carry) })
             : this.L("empty_hint")}
         </div>
         <div class="row end">
@@ -553,47 +543,68 @@ export class LunaScheduleEditor extends LitElement {
       --mdc-icon-size: 18px;
     }
 
-    .days,
-    .targets {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
+    .kinds {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
     }
-    .day {
+    .kind {
       all: unset;
       position: relative;
       box-sizing: border-box;
-      min-width: 44px;
-      height: 36px;
-      padding: 0 10px;
-      border-radius: 18px;
-      display: inline-flex;
+      min-height: 56px;
+      padding: 8px 12px;
+      border-radius: 14px;
+      display: flex;
       align-items: center;
-      justify-content: center;
-      font-size: 13px;
-      font-weight: 600;
+      gap: 10px;
+      min-width: 0;
       cursor: pointer;
       background: var(--luna-soft);
       color: var(--secondary-text-color);
+      box-shadow: inset 0 0 0 1.5px transparent;
     }
-    .day.active {
-      background: var(--primary-text-color);
-      color: var(--card-background-color, #fff);
+    .kind ha-icon {
+      flex: none;
+      --mdc-icon-size: 20px;
     }
-    .day .has {
+    .kind.active {
+      color: var(--primary-text-color);
+      box-shadow: inset 0 0 0 1.5px var(--primary-text-color);
+    }
+    .kind:focus-visible {
+      outline: 2px solid var(--primary-color);
+      outline-offset: 2px;
+    }
+    .kind-text {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .kind-name {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .kind-sub {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .today {
       position: absolute;
-      bottom: 4px;
-      left: 50%;
-      width: 4px;
-      height: 4px;
-      margin-left: -2px;
-      border-radius: 50%;
-      background: currentColor;
-      opacity: 0.6;
-    }
-    .day.small {
-      height: 32px;
-      min-width: 40px;
+      top: -7px;
+      right: 10px;
+      padding: 1px 7px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
     }
 
     .bar-wrap {

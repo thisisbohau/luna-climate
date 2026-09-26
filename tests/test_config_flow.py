@@ -17,7 +17,12 @@ async def _create_entry(hass: HomeAssistant):
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Luna Climate"
-    assert result["options"] == {"zones": [], "presence_entities": []}
+    assert result["options"] == {
+        "zones": [],
+        "presence_entities": [],
+        "workday_entity": None,
+        "workday_offset": "tomorrow",
+    }
     await hass.async_block_till_done()
     return hass.config_entries.async_entries(DOMAIN)[0]
 
@@ -38,7 +43,7 @@ async def test_options_add_edit_remove_zone(hass: HomeAssistant) -> None:
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.MENU
-    assert result["menu_options"] == ["add_zone", "presence"]
+    assert result["menu_options"] == ["add_zone", "presence", "workday"]
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "add_zone"}
@@ -73,7 +78,7 @@ async def test_options_add_edit_remove_zone(hass: HomeAssistant) -> None:
 
     # Edit it.
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["menu_options"] == ["add_zone", "edit_zone", "remove_zone", "presence"]
+    assert result["menu_options"] == ["add_zone", "edit_zone", "remove_zone", "presence", "workday"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {"next_step_id": "edit_zone"}
     )
@@ -125,3 +130,34 @@ async def test_presence_is_one_household_list(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     assert entry.options["presence_entities"] == ["person.david", "input_boolean.bettina_home"]
     assert entry.options["zones"] == []
+
+
+async def test_workday_source(hass: HomeAssistant) -> None:
+    """The workday sensor and which day it describes are picked once."""
+    entry = await _create_entry(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "workday"}
+    )
+    assert result["step_id"] == "workday"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {"workday_entity": "binary_sensor.workday_tomorrow", "workday_offset": "tomorrow"},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert entry.options["workday_entity"] == "binary_sensor.workday_tomorrow"
+    assert entry.options["workday_offset"] == "tomorrow"
+    assert entry.options["zones"] == []
+
+    # Clearing the entity falls back to Monday-Friday.
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"next_step_id": "workday"}
+    )
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], {"workday_offset": "today"}
+    )
+    await hass.async_block_till_done()
+    assert entry.options["workday_entity"] is None
+    assert entry.options["workday_offset"] == "today"

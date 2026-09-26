@@ -93,31 +93,23 @@ export function zoneIcon(zone: ZoneView, override?: string): string {
 }
 
 export interface ZoneBattery {
-  lowest?: number;
-  warning: boolean;
+  /** True when any battery behind the zone is low. */
+  low: boolean;
+  /** How many batteries were found (valves, sensors, ...). */
+  count: number;
 }
 
 /**
- * The zone's battery summary, found through the device registry: the
- * integration's "lowest battery" sensor lives on the same device as the
- * zone's climate entity.
+ * The zone's battery status, as the integration reports it on the zone's
+ * climate entity: every battery on the zone's devices and on the devices
+ * linked to them (a Tado zone's valves and wireless sensor). Undefined
+ * when the zone has no batteries at all.
  */
 export function readBattery(hass: HomeAssistant, entityId: string): ZoneBattery | undefined {
-  const entities = hass.entities;
-  if (!entities) return undefined;
-  const deviceId = entities[entityId]?.device_id;
-  if (!deviceId) return undefined;
-  const sensor = Object.values(entities).find(
-    (e) => e.device_id === deviceId && e.translation_key === "battery_min",
-  );
-  if (!sensor) return undefined;
-  const state = hass.states[sensor.entity_id];
-  if (!state) return undefined;
-  const lowest = Number(state.state);
-  return {
-    lowest: Number.isFinite(lowest) ? lowest : undefined,
-    warning: Boolean(state.attributes.luna_battery_warning),
-  };
+  const attrs = hass.states[entityId]?.attributes;
+  const count = Number(attrs?.luna_battery_count ?? 0);
+  if (!count) return undefined;
+  return { low: Boolean(attrs?.luna_battery_low), count };
 }
 
 export function formatTemp(value: TargetValue | undefined, hass?: HomeAssistant): string {

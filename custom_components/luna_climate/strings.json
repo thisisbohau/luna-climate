@@ -18,7 +18,8 @@
           "add_zone": "Add a zone",
           "edit_zone": "Edit a zone",
           "remove_zone": "Remove a zone",
-          "presence": "Home & away"
+          "presence": "Home & away",
+          "workday": "Workdays"
         }
       },
       "add_zone": {
@@ -36,7 +37,7 @@
           "temp_sensors": "What measures the zone. Leave empty to fall back to the thermostats' own readings. Required when the zone has linked devices.",
           "linked_devices": "Switches with no control loop of their own, such as a towel warmer. Luna switches them against the measured temperature.",
           "humidity_sensors": "Optional. Leave empty to use the humidity sensors on the same devices as the zone's temperature sensors and thermostats.",
-          "away_enabled": "Drop to the away temperature when nobody is home. Turn off for rooms that should keep their schedule regardless."
+          "away_enabled": "Drop to the global away temperature when nobody is home. Turn off for rooms that should keep their schedule regardless."
         }
       },
       "edit_zone": {
@@ -64,9 +65,21 @@
       },
       "presence": {
         "title": "Home & away",
-        "description": "One list for the whole house. When every tracker is off (or not_home), all zones that follow away drop to their away temperature.",
+        "description": "One list for the whole house. When every tracker is off (or not_home), all zones that follow away drop to the away temperature.",
         "data": {
           "presence_entities": "Presence trackers"
+        }
+      },
+      "workday": {
+        "title": "Workdays",
+        "description": "Each zone has a workday and a free-day schedule (weekends and holidays). Pick the sensor that decides between them. Without one, Monday to Friday count as workdays.",
+        "data": {
+          "workday_entity": "Workday sensor",
+          "workday_offset": "The sensor describes"
+        },
+        "data_description": {
+          "workday_entity": "A binary sensor or input boolean that is on for a workday, such as the Workday integration.",
+          "workday_offset": "A sensor set up for the next day (Workday with days_offset: 1) says on Friday that Saturday is free. Luna remembers what it said the day before, so Friday still runs the workday schedule."
         }
       }
     },
@@ -88,17 +101,9 @@
         }
       }
     },
-    "switch": {
-      "night_mode": {
-        "name": "Night mode"
-      }
-    },
     "number": {
       "away_temp": {
         "name": "Away temperature"
-      },
-      "night_temp": {
-        "name": "Night temperature"
       },
       "boost_offset": {
         "name": "Boost offset"
@@ -113,14 +118,6 @@
         "name": "Precomfort timeout"
       }
     },
-    "time": {
-      "night_start": {
-        "name": "Night start"
-      },
-      "night_end": {
-        "name": "Night end"
-      }
-    },
     "sensor": {
       "scheduled_temp": {
         "name": "Scheduled temperature"
@@ -128,16 +125,20 @@
       "boost_ends_at": {
         "name": "Boost ends at"
       },
-      "battery_min": {
-        "name": "Lowest battery"
-      },
-      "night_avg_temp": {
-        "name": "Night average temperature"
+      "day_type": {
+        "name": "Day type",
+        "state": {
+          "workday": "Workday",
+          "free": "Free day"
+        }
       }
     },
     "binary_sensor": {
       "home": {
         "name": "Home"
+      },
+      "zone_battery": {
+        "name": "Battery"
       }
     },
     "button": {
@@ -185,17 +186,21 @@
     },
     "set_schedule": {
       "name": "Set schedule",
-      "description": "Replaces a zone's weekly schedule.",
+      "description": "Replaces a zone's workday schedule, free-day schedule or both.",
       "fields": {
-        "schedule": {
-          "name": "Schedule",
-          "description": "List of blocks: weekdays (0 = Monday), start (HH:MM) and value (off, max, or 18-25)."
+        "workday": {
+          "name": "Workday",
+          "description": "Blocks for workdays: start (HH:MM) and value (off, max, or 18-25)."
+        },
+        "free": {
+          "name": "Free day",
+          "description": "Blocks for weekends and holidays: start (HH:MM) and value (off, max, or 18-25)."
         }
       }
     },
     "get_schedule": {
       "name": "Get schedule",
-      "description": "Returns a zone's weekly schedule."
+      "description": "Returns a zone's workday and free-day schedules."
     },
     "set_target": {
       "name": "Set target",
@@ -210,6 +215,14 @@
     "resume_schedule": {
       "name": "Resume schedule",
       "description": "Hands a zone back to its schedule."
+    }
+  },
+  "selector": {
+    "workday_offset": {
+      "options": {
+        "tomorrow": "The next day",
+        "today": "The current day"
+      }
     }
   }
 }

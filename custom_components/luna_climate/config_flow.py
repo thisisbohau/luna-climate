@@ -1,12 +1,13 @@
 """Config and options flow for Luna Climate.
 
-A single config entry acts as the hub. Zones and the household's presence
-trackers live in ``entry.options`` and are managed through the options
-flow: add, edit and remove zones, and pick who counts for home/away.
+A single config entry acts as the hub. Zones, the household's presence
+trackers and the workday source live in ``entry.options`` and are managed
+through the options flow: add, edit and remove zones, pick who counts for
+home/away, and pick what says whether a day is a workday.
 
 Only structural configuration lives here -- which entity plays which role.
-Everything tunable (temperatures, hysteresis, the night window) is a
-runtime entity so it can be changed without reconfiguring anything.
+Everything tunable (temperatures, hysteresis) is a runtime entity so it can
+be changed without reconfiguring anything.
 """
 
 from __future__ import annotations
@@ -32,9 +33,13 @@ from .const import (
     CONF_PRESENCE_ENTITIES,
     CONF_TEMP_SENSORS,
     CONF_THERMOSTATS,
+    CONF_WORKDAY_ENTITY,
+    CONF_WORKDAY_OFFSET,
     CONF_ZONE_ID,
     CONF_ZONES,
     DOMAIN,
+    WORKDAY_TODAY,
+    WORKDAY_TOMORROW,
 )
 
 ZONE_SCHEMA = vol.Schema(
@@ -92,7 +97,7 @@ class LunaConfigFlow(ConfigFlow, domain=DOMAIN):
     """Create the single Luna Climate hub entry."""
 
     VERSION = 1
-    MINOR_VERSION = 2
+    MINOR_VERSION = 3
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -105,7 +110,12 @@ class LunaConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_create_entry(
             title="Luna Climate",
             data={},
-            options={CONF_ZONES: [], CONF_PRESENCE_ENTITIES: []},
+            options={
+                CONF_ZONES: [],
+                CONF_PRESENCE_ENTITIES: [],
+                CONF_WORKDAY_ENTITY: None,
+                CONF_WORKDAY_OFFSET: WORKDAY_TOMORROW,
+            },
         )
 
     @staticmethod
@@ -133,14 +143,14 @@ class LunaOptionsFlow(OptionsFlow):
     async def _async_save(
         self,
         zones: list[dict[str, Any]] | None = None,
-        presence: list[str] | None = None,
+        **changes: Any,
     ) -> ConfigFlowResult:
-        return self.async_create_entry(
-            data={
-                CONF_ZONES: self._zones if zones is None else zones,
-                CONF_PRESENCE_ENTITIES: self._presence if presence is None else presence,
-            }
-        )
+        """Save the options, changing only what was passed."""
+        data = dict(self.config_entry.options)
+        if zones is not None:
+            data[CONF_ZONES] = zones
+        data.update(changes)
+        return self.async_create_entry(data=data)
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -149,7 +159,7 @@ class LunaOptionsFlow(OptionsFlow):
         menu = ["add_zone"]
         if self._zones:
             menu += ["edit_zone", "remove_zone"]
-        menu.append("presence")
+        menu += ["presence", "workday"]
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     # -- presence ---------------------------------------------------------
@@ -164,7 +174,7 @@ class LunaOptionsFlow(OptionsFlow):
         """
         if user_input is not None:
             return await self._async_save(
-                presence=list(user_input.get(CONF_PRESENCE_ENTITIES) or [])
+                **{CONF_PRESENCE_ENTITIES: list(user_input.get(CONF_PRESENCE_ENTITIES) or [])}
             )
         schema = vol.Schema(
             {vol.Optional(CONF_PRESENCE_ENTITIES, default=[]): PRESENCE_SELECTOR}
@@ -174,6 +184,55 @@ class LunaOptionsFlow(OptionsFlow):
             data_schema=self.add_suggested_values_to_schema(
                 schema, {CONF_PRESENCE_ENTITIES: self._presence}
             ),
+        )
+
+    # -- workday ----------------------------------------------------------
+
+    async def async_step_workday(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Pick what says whether a day is a workday.
+
+        Each zone has a workday and a free-day schedule; this entity picks
+        between them. Most setups use the Workday integration with
+        ``days_offset: 1``, which describes *tomorrow* -- hence the offset.
+        """
+        options = self.config_entry.options
+        if user_input is not None:
+            return await self._async_save(
+                **{
+                    CONF_WORKDAY_ENTITY: user_input.get(CONF_WORKDAY_ENTITY) or None,
+                    CONF_WORKDAY_OFFSET: user_input.get(
+                        CONF_WORKDAY_OFFSET, WORKDAY_TOMORROW
+                    ),
+                }
+            )
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_WORKDAY_ENTITY): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=["binary_sensor", "input_boolean"]
+                    )
+                ),
+                vol.Required(
+                    CONF_WORKDAY_OFFSET, default=WORKDAY_TOMORROW
+                ): selector.SelectSelector(
+                    selector.SelectSelectorConfig(
+                        options=[WORKDAY_TOMORROW, WORKDAY_TODAY],
+                        translation_key="workday_offset",
+                        mode=selector.SelectSelectorMode.LIST,
+                    )
+                ),
+            }
+        )
+        suggested: dict[str, Any] = {
+            CONF_WORKDAY_OFFSET: options.get(CONF_WORKDAY_OFFSET, WORKDAY_TOMORROW)
+        }
+        if options.get(CONF_WORKDAY_ENTITY):
+            suggested[CONF_WORKDAY_ENTITY] = options[CONF_WORKDAY_ENTITY]
+        return self.async_show_form(
+            step_id="workday",
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
         )
 
     # -- add --------------------------------------------------------------

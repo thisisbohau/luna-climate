@@ -10,10 +10,10 @@
  *   show_humidity: true     # optional
  */
 
-import { LitElement, css, html, nothing, type PropertyValues } from "lit";
+import { LitElement, css, html, nothing, unsafeCSS, type PropertyValues } from "lit";
 import { property, state } from "lit/decorators.js";
 import { openZoneDialog } from "./zone-dialog";
-import { tint } from "./colors";
+import { LUNA, tint } from "./colors";
 import { localize, type StringKey } from "./i18n";
 import { ScheduleController, renderScheduleStrip, scheduleStripStyles } from "./schedule-strip";
 import type { HomeAssistant, LovelaceCardConfig } from "./types";
@@ -173,11 +173,15 @@ export class LunaZoneCompactCard extends LitElement {
         <button class="header" type="button" @click=${this.moreInfo} aria-label=${zone.name}>
           <span class="shape"><ha-icon .icon=${zoneIcon(zone, this.config.icon)}></ha-icon></span>
           <span class="name">${this.config.name ?? zone.name}</span>
-          ${battery?.warning
-            ? html`<span class="battery" title=${L("battery")}>
-                <ha-icon icon="mdi:battery-alert-variant-outline"></ha-icon>
-                ${battery.lowest !== undefined ? `${Math.round(battery.lowest)}%` : L("battery_low")}
-              </span>`
+          ${battery
+            ? battery.low
+              ? html`<span class="battery low" title=${`${L("battery")}: ${L("battery_low")}`}>
+                  <ha-icon icon="mdi:battery-alert-variant-outline"></ha-icon>
+                  ${L("battery_low")}
+                </span>`
+              : html`<span class="battery ok" title=${`${L("battery")}: ${L("battery_ok")}`}>
+                  <ha-icon icon="mdi:battery-check"></ha-icon>
+                </span>`
             : nothing}
         </button>
 
@@ -290,9 +294,18 @@ export class LunaZoneCompactCard extends LitElement {
         border-radius: 13px;
         font-size: 12px;
         font-weight: 600;
-        color: var(--luna-warning-color, var(--error-color, #db4437));
-        background: color-mix(in srgb, var(--luna-warning-color, var(--error-color, #db4437)) 14%, transparent);
         --mdc-icon-size: 15px;
+      }
+      .battery.low {
+        color: ${unsafeCSS(LUNA.batteryLow)};
+        background: color-mix(in srgb, ${unsafeCSS(LUNA.batteryLow)} 16%, transparent);
+      }
+      .battery.ok {
+        padding: 0;
+        width: 26px;
+        justify-content: center;
+        color: ${unsafeCSS(LUNA.batteryOk)};
+        --mdc-icon-size: 17px;
       }
 
       .stats {

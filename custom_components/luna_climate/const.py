@@ -25,26 +25,27 @@ CONF_LINKED_DEVICES: Final = "linked_devices"
 CONF_PRESENCE_ENTITIES: Final = "presence_entities"
 CONF_HUMIDITY_SENSORS: Final = "humidity_sensors"
 CONF_AWAY_ENABLED: Final = "away_enabled"
+#: A binary_sensor / input_boolean saying whether a day is a workday.
+CONF_WORKDAY_ENTITY: Final = "workday_entity"
+#: Which day that entity describes: "tomorrow" (e.g. the Workday
+#: integration with days_offset: 1) or "today".
+CONF_WORKDAY_OFFSET: Final = "workday_offset"
+WORKDAY_TOMORROW: Final = "tomorrow"
+WORKDAY_TODAY: Final = "today"
 
 # --- runtime settings (stored in the Store, editable via entities) --------
 
-SET_AWAY_TEMP: Final = "away_temp"
-SET_NIGHT_TEMP: Final = "night_temp"
 SET_HYSTERESIS: Final = "hysteresis"
 SET_MIN_CYCLE: Final = "min_cycle_minutes"
 SET_BOOST_OFFSET: Final = "boost_offset"
 
-GLOBAL_NIGHT_START: Final = "night_start"
-GLOBAL_NIGHT_END: Final = "night_end"
+GLOBAL_AWAY_TEMP: Final = "away_temp"
 GLOBAL_PRECOMFORT_TIMEOUT: Final = "precomfort_timeout"
 
 DEFAULT_AWAY_TEMP: Final = 16.0
-DEFAULT_NIGHT_TEMP: Final = 20.0
 DEFAULT_HYSTERESIS: Final = 0.3
 DEFAULT_MIN_CYCLE: Final = 10
 DEFAULT_BOOST_OFFSET: Final = 2.0
-DEFAULT_NIGHT_START: Final = "22:00:00"
-DEFAULT_NIGHT_END: Final = "06:00:00"
 DEFAULT_PRECOMFORT_TIMEOUT: Final = 120
 
 # --- schedule block values ------------------------------------------------
@@ -87,6 +88,8 @@ ATTR_ZONE_ID: Final = "zone_id"
 ATTR_DURATION: Final = "duration"
 ATTR_TEMPERATURE: Final = "temperature"
 ATTR_SCHEDULE: Final = "schedule"
+ATTR_WORKDAY: Final = "workday"
+ATTR_FREE: Final = "free"
 ATTR_VALUE: Final = "value"
 
 # --- dispatcher -----------------------------------------------------------
@@ -97,4 +100,6 @@ SIGNAL_OPEN_UI: Final = f"{DOMAIN}_open_ui"
 
 # --- battery --------------------------------------------------------------
 
+#: A percentage battery below this counts as low. Flag-style batteries
+#: (Tado) are low when their flag says so.
 BATTERY_WARN_THRESHOLD: Final = 5

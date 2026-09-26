@@ -9,8 +9,9 @@ Resolution order, highest priority first:
 2. **Manual mode** -- the zone's own setpoint, schedule ignored.
 3. **Away** -- every household presence tracker says nobody is home, the
    zone follows away, and precomfort is not suppressing it. Lowers the
-   target to the zone's away temperature; an off block stays off.
-4. **Schedule** -- the block in force right now.
+   target to the global away temperature; an off block stays off.
+4. **Schedule** -- the block in force right now, from the zone's workday
+   or free-day schedule depending on what kind of day it is.
 
 The resolved value is one of ``off``, ``max`` or a target temperature.
 Thermostats receive a setpoint and regulate themselves. Linked devices
@@ -26,6 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from homeassistant.components.binary_sensor import BinarySensorDeviceClass
 from homeassistant.components.climate import (
     ATTR_CURRENT_HUMIDITY,
     ATTR_CURRENT_TEMPERATURE,
@@ -47,11 +49,13 @@ from homeassistant.const import (
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_HOME,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
 from homeassistant.core import Event, HomeAssistant, State, callback, split_entity_id
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -62,6 +66,7 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BATTERY_WARN_THRESHOLD,
     CONF_AWAY_ENABLED,
     CONF_HUMIDITY_SENSORS,
     CONF_LINKED_DEVICES,
@@ -69,26 +74,30 @@ from .const import (
     CONF_TEMP_SENSORS,
     CONF_THERMOSTATS,
     CONF_ZONE_ID,
+    GLOBAL_AWAY_TEMP,
     GLOBAL_PRECOMFORT_TIMEOUT,
     MAX_TEMP,
     MODE_AUTO,
     MODE_MANUAL,
-    SET_AWAY_TEMP,
     SET_BOOST_OFFSET,
     SET_HYSTERESIS,
     SET_MIN_CYCLE,
     SIGNAL_UPDATE,
     VALUE_MAX,
     VALUE_OFF,
+    WORKDAY_TODAY,
+    WORKDAY_TOMORROW,
     ZONE_MAX_TEMP,
     ZONE_MIN_TEMP,
 )
 from .schedule import (
+    DAY_FREE,
+    DAY_WORKDAY,
     ActiveBlock,
-    ScheduleBlock,
+    Schedules,
     active_block,
-    parse_schedule,
-    schedule_as_list,
+    parse_schedules,
+    schedules_as_dict,
 )
 from .store import LunaStore
 
@@ -195,15 +204,28 @@ class LunaEngine:
         self._applying = False
         self._dirty = False
         self._humidity_sources: dict[str, list[str]] = {}
+        self._battery_sources: dict[str, list[str]] = {}
         self.presence_entities: list[str] = []
+        self.workday_entity: str | None = None
+        self.workday_offset: str = WORKDAY_TOMORROW
 
     # -- lifecycle --------------------------------------------------------
 
     async def async_start(
-        self, zones: list[dict[str, Any]], presence: list[str] | None = None
+        self,
+        zones: list[dict[str, Any]],
+        presence: list[str] | None = None,
+        workday_entity: str | None = None,
+        workday_offset: str = WORKDAY_TOMORROW,
     ) -> None:
-        """Start the engine for the given zones and presence trackers."""
+        """Start the engine for the given zones, presence and workday source."""
+        self.workday_entity = workday_entity or None
+        self.workday_offset = (
+            workday_offset if workday_offset in (WORKDAY_TODAY, WORKDAY_TOMORROW)
+            else WORKDAY_TOMORROW
+        )
         self.set_zones(zones, presence)
+        await self._async_record_workday()
         self._unsub_tick = async_track_time_interval(self.hass, self._on_tick, TICK)
         self._resubscribe()
         await self.async_apply_all()
@@ -234,21 +256,39 @@ class LunaEngine:
             timer()
         self._pending_cycle.clear()
 
+    def _discover(self) -> bool:
+        """Find each zone's humidity and battery entities.
+
+        Returns True when anything changed. Re-run every tick, because the
+        integrations that own those entities may finish loading after us.
+        """
+        humidity = {
+            zone.zone_id: self._discover_humidity(zone) for zone in self.zones.values()
+        }
+        battery = {
+            zone.zone_id: self._discover_batteries(zone) for zone in self.zones.values()
+        }
+        changed = humidity != self._humidity_sources or battery != self._battery_sources
+        self._humidity_sources = humidity
+        self._battery_sources = battery
+        return changed
+
     def _resubscribe(self) -> None:
         """Watch every entity whose change could alter a zone's decision."""
         if self._unsub_states is not None:
             self._unsub_states()
             self._unsub_states = None
 
-        self._humidity_sources = {
-            zone.zone_id: self._discover_humidity(zone) for zone in self.zones.values()
-        }
+        self._discover()
 
         watched: set[str] = set(self.presence_entities)
+        if self.workday_entity:
+            watched.add(self.workday_entity)
         for zone in self.zones.values():
             watched.update(zone.temp_sensors)
             watched.update(zone.linked_devices)
             watched.update(self._humidity_sources.get(zone.zone_id, []))
+            watched.update(self._battery_sources.get(zone.zone_id, []))
         if not watched:
             return
         self._unsub_states = async_track_state_change_event(
@@ -259,7 +299,13 @@ class LunaEngine:
 
     @callback
     def _on_tick(self, _now: dt.datetime) -> None:
-        self.hass.async_create_task(self.async_apply_all())
+        if self._discover():
+            self._resubscribe()
+        self.hass.async_create_task(self._async_tick())
+
+    async def _async_tick(self) -> None:
+        await self._async_record_workday()
+        await self.async_apply_all()
 
     @callback
     def _on_state_change(self, event: Event) -> None:
@@ -267,6 +313,9 @@ class LunaEngine:
         if new is None or new.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return
         entity_id = event.data["entity_id"]
+
+        if entity_id == self.workday_entity:
+            self.hass.async_create_task(self._async_record_workday())
 
         # Anyone arriving home cancels the precomfort grace period; it has
         # done its job.
@@ -281,13 +330,72 @@ class LunaEngine:
 
     # -- resolution -------------------------------------------------------
 
-    def schedule_blocks(self, zone_id: str) -> list[ScheduleBlock]:
-        """Parsed schedule for a zone."""
+    def schedules(self, zone_id: str) -> Schedules:
+        """Parsed workday and free-day schedules for a zone."""
         try:
-            return parse_schedule(self.store.zone(zone_id)["schedule"])
+            return parse_schedules(self.store.zone(zone_id)["schedules"])
         except Exception:  # noqa: BLE001 - never let a bad block stop control
             _LOGGER.exception("Zone %s has an unreadable schedule", zone_id)
-            return []
+            return {DAY_WORKDAY: [], DAY_FREE: []}
+
+    def active_block(self, zone_id: str, now: dt.datetime | None = None) -> ActiveBlock | None:
+        """The schedule block in force for a zone, ignoring away/boost/manual."""
+        return active_block(self.schedules(zone_id), self.day_type, now or dt_util.now())
+
+    # -- workday / free day ------------------------------------------------
+
+    def _workday_reading(self) -> bool | None:
+        """The workday entity's current reading, or None if unusable."""
+        if not self.workday_entity:
+            return None
+        state = self.hass.states.get(self.workday_entity)
+        if state is None:
+            return None
+        if state.state == STATE_ON:
+            return True
+        if state.state == STATE_OFF:
+            return False
+        return None
+
+    async def _async_record_workday(self) -> None:
+        """Remember what the workday entity says today.
+
+        With a sensor that describes *tomorrow*, today's day type is what it
+        said yesterday -- which only survives a restart if it was written
+        down. The last reading of each date wins.
+        """
+        reading = self._workday_reading()
+        if reading is None:
+            return
+        if self.store.record_workday(dt_util.now().date(), reading):
+            await self.store.async_save()
+
+    def day_type_info(self, day: dt.date) -> tuple[str, bool]:
+        """Return (day type, whether the workday entity decided it).
+
+        The entity is read for the day it describes: with the "tomorrow"
+        offset, the reading taken on the day before; with "today", the
+        reading on the day itself. Readings from the past come from the
+        stored log, the present from the live state. Without a usable
+        reading, Monday to Friday count as workdays.
+        """
+        if self.workday_entity:
+            today = dt_util.now().date()
+            source = day - dt.timedelta(days=1) if self.workday_offset == WORKDAY_TOMORROW else day
+            reading: bool | None = None
+            if source == today:
+                reading = self._workday_reading()
+                if reading is None:
+                    reading = self.store.workday_reading(today)
+            elif source < today:
+                reading = self.store.workday_reading(source)
+            if reading is not None:
+                return (DAY_WORKDAY if reading else DAY_FREE), True
+        return (DAY_WORKDAY if day.weekday() < 5 else DAY_FREE), False
+
+    def day_type(self, day: dt.date) -> str:
+        """``workday`` or ``free`` for a date."""
+        return self.day_type_info(day)[0]
 
     @property
     def everyone_away(self) -> bool:
@@ -345,12 +453,12 @@ class LunaEngine:
         if state["mode"] == MODE_MANUAL:
             return Resolved(normalise_target(state["manual_temp"]), SOURCE_MANUAL)
 
-        block = active_block(self.schedule_blocks(zone.zone_id), dt_util.now())
+        block = self.active_block(zone.zone_id)
 
         if self.is_away(zone):
             # Away only ever lowers the target. An off block (or no
             # schedule) stays off; a lower block keeps its own value.
-            away = float(self.store.setting(zone.zone_id, SET_AWAY_TEMP))
+            away = float(self.store.global_setting(GLOBAL_AWAY_TEMP))
             if block is None or block.value == VALUE_OFF:
                 return Resolved(VALUE_OFF, SOURCE_AWAY, block)
             if block.value == VALUE_MAX:
@@ -424,6 +532,80 @@ class LunaEngine:
     def humidity_sources(self, zone_id: str) -> list[str]:
         """The humidity entities in use for a zone, explicit or discovered."""
         return list(self._humidity_sources.get(zone_id, []))
+
+    def _zone_devices(self, zone: ZoneConfig) -> list[str]:
+        """Every device behind a zone, including devices linked *to* them.
+
+        A zone's own entities often sit on a logical device rather than the
+        hardware: TadoLocal puts each Tado zone's climate entity on a zone
+        device, and the valves and sensors in that zone -- the ones with the
+        batteries -- are separate devices connected via it. So the walk goes
+        from each configured entity's device down to everything registered
+        ``via_device`` it, however deep.
+        """
+        ent_reg = er.async_get(self.hass)
+        dev_reg = dr.async_get(self.hass)
+        found: list[str] = []
+        for entity_id in zone.all_device_entities:
+            entry = ent_reg.async_get(entity_id)
+            if entry is not None and entry.device_id and entry.device_id not in found:
+                found.append(entry.device_id)
+
+        children: dict[str, list[str]] = {}
+        for device in dev_reg.devices.values():
+            if device.via_device_id:
+                children.setdefault(device.via_device_id, []).append(device.id)
+        queue = list(found)
+        while queue:
+            for child in children.get(queue.pop(0), []):
+                if child not in found:
+                    found.append(child)
+                    queue.append(child)
+        return found
+
+    def _discover_batteries(self, zone: ZoneConfig) -> list[str]:
+        """Battery entities (percentages and low flags) of a zone's devices."""
+        ent_reg = er.async_get(self.hass)
+        found: list[str] = []
+        for device_id in self._zone_devices(zone):
+            for entry in er.async_entries_for_device(ent_reg, device_id):
+                if entry.domain not in ("sensor", "binary_sensor"):
+                    continue
+                device_class = entry.device_class or entry.original_device_class
+                if device_class in (SensorDeviceClass.BATTERY, BinarySensorDeviceClass.BATTERY):
+                    found.append(entry.entity_id)
+        return found
+
+    def battery_status(self, zone_id: str) -> list[dict[str, Any]]:
+        """Every battery behind a zone with its reading and a low flag.
+
+        A percentage is low below ``BATTERY_WARN_THRESHOLD``; a flag-style
+        battery (Tado) is low when its flag is on. Unavailable entities are
+        listed without a verdict.
+        """
+        dev_reg = dr.async_get(self.hass)
+        ent_reg = er.async_get(self.hass)
+        result: list[dict[str, Any]] = []
+        for entity_id in self._battery_sources.get(zone_id, []):
+            entry = ent_reg.async_get(entity_id)
+            device = dev_reg.async_get(entry.device_id) if entry and entry.device_id else None
+            name = (device.name_by_user or device.name) if device else entity_id
+            state = self.hass.states.get(entity_id)
+            item: dict[str, Any] = {"entity_id": entity_id, "device": name, "low": None}
+            if state is not None and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                if entity_id.startswith("binary_sensor."):
+                    item["low"] = state.state == STATE_ON
+                else:
+                    level = _as_float(state.state)
+                    if level is not None:
+                        item["level"] = level
+                        item["low"] = level < BATTERY_WARN_THRESHOLD
+            result.append(item)
+        return result
+
+    def battery_low(self, zone_id: str) -> bool:
+        """True when any battery behind the zone is low."""
+        return any(item["low"] for item in self.battery_status(zone_id))
 
     def measured_humidity(self, zone: ZoneConfig) -> float | None:
         """Mean relative humidity of the zone, or ``None``.
@@ -792,18 +974,33 @@ class LunaEngine:
 
     # -- schedule editing -------------------------------------------------
 
-    async def async_set_schedule(
-        self, zone_id: str, raw_schedule: list[dict[str, Any]]
+    async def async_set_schedules(
+        self, zone_id: str, raw: dict[str, list[dict[str, Any]]]
     ) -> None:
-        """Replace a zone's schedule and re-apply immediately."""
-        blocks = parse_schedule(raw_schedule)
-        self.store.zone(zone_id)["schedule"] = schedule_as_list(blocks)
+        """Replace one or both of a zone's day schedules and re-apply.
+
+        Day types missing from ``raw`` are left as they are.
+        """
+        current = schedules_as_dict(self.schedules(zone_id))
+        current.update(raw)
+        parsed = parse_schedules(current)
+        self.store.zone(zone_id)["schedules"] = schedules_as_dict(parsed)
         await self.store.async_save()
         await self.async_apply_all()
 
-    def get_schedule(self, zone_id: str) -> list[dict[str, Any]]:
-        """A zone's schedule in its stored form."""
-        return schedule_as_list(self.schedule_blocks(zone_id))
+    def get_schedules(self, zone_id: str) -> dict[str, list[dict[str, Any]]]:
+        """A zone's two day schedules in their stored form."""
+        return schedules_as_dict(self.schedules(zone_id))
+
+    def day_types(self) -> dict[str, Any]:
+        """Day types for yesterday, today and tomorrow, for the frontend."""
+        today = dt_util.now().date()
+        result: dict[str, Any] = {}
+        for label, delta in (("yesterday", -1), ("today", 0), ("tomorrow", 1)):
+            kind, _from_entity = self.day_type_info(today + dt.timedelta(days=delta))
+            result[label] = kind
+        result["from_entity"] = self.day_type_info(today)[1]
+        return result
 
 
 def normalise_target(value: Any) -> str | float:

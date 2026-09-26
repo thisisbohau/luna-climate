@@ -12,11 +12,11 @@ import { css, html, type ReactiveController, type ReactiveControllerHost } from 
 import { LUNA, tint } from "./colors";
 import { localize, type StringKey } from "./i18n";
 import { dayView, formatClock, zonedNow, type DayView } from "./schedule";
-import type { HomeAssistant, ScheduleBlock, TargetValue } from "./types";
+import type { HomeAssistant, ScheduleData, TargetValue } from "./types";
 import { formatTemp, type ZoneSource, type ZoneView } from "./zone";
 
 export class ScheduleController implements ReactiveController {
-  schedule?: ScheduleBlock[];
+  schedule?: ScheduleData;
   private key?: string;
 
   constructor(
@@ -33,8 +33,8 @@ export class ScheduleController implements ReactiveController {
   hostUpdated(): void {
     const { hass, zone, enabled } = this.source();
     if (!hass || !zone || !enabled) return;
-    const block = hass.states[zone.entityId]?.attributes.luna_block_start ?? "";
-    const key = `${zone.zoneId}|${block}|${Math.floor(Date.now() / 600000)}`;
+    const attrs = hass.states[zone.entityId]?.attributes ?? {};
+    const key = `${zone.zoneId}|${attrs.luna_block_start ?? ""}|${attrs.luna_day_type ?? ""}|${Math.floor(Date.now() / 600000)}`;
     if (key === this.key) return;
     this.key = key;
     void this.fetch(hass, zone.zoneId);
@@ -42,15 +42,14 @@ export class ScheduleController implements ReactiveController {
 
   private async fetch(hass: HomeAssistant, zoneId: string): Promise<void> {
     try {
-      const res = await hass.callWS<{ schedule: ScheduleBlock[] }>({
+      this.schedule = await hass.callWS<ScheduleData>({
         type: "luna_climate/schedule/get",
         zone_id: zoneId,
       });
-      this.schedule = res.schedule;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn("luna card: could not load schedule", err);
-      this.schedule = [];
+      this.schedule = undefined;
     }
     this.host.requestUpdate();
   }
@@ -58,7 +57,7 @@ export class ScheduleController implements ReactiveController {
 
 export interface StripOptions {
   hass: HomeAssistant;
-  schedule?: ScheduleBlock[];
+  schedule?: ScheduleData;
   source: ZoneSource;
   onResume: () => void;
   /** Tapping the strip opens the schedule editor. */
